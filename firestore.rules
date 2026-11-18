@@ -1,0 +1,525 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Primitive & Identity Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Distinguishes real authenticated users (Google/Email) from anonymous guest sessions
+    function isRealUser() {
+      return isSignedIn() && (
+        !('firebase' in request.auth.token) ||
+        !('sign_in_provider' in request.auth.token.firebase) ||
+        request.auth.token.firebase.sign_in_provider != 'anonymous'
+      );
+    }
+
+    // Role-based access control exclusively through adminUsers/{uid}
+    function isAdminOrOwner() {
+      return isRealUser() &&
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.active == true &&
+        (get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role == 'owner' ||
+         get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role == 'admin');
+    }
+
+    function isModeratorOrHigher() {
+      return isRealUser() &&
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.active == true &&
+        (get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role == 'owner' ||
+         get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role == 'admin' ||
+         get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role == 'moderator');
+    }
+
+    function isOwnerRole() {
+      return isRealUser() &&
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.active == true &&
+        get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role == 'owner';
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidAdminUser(data) {
+      return (data.role == 'owner' || data.role == 'admin' || data.role == 'moderator') &&
+             data.active is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidInspirationImage(data) {
+      return !('promptText' in data) &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 150 &&
+             data.shortName is string && data.shortName.size() >= 1 && data.shortName.size() <= 80 &&
+             data.description is string && data.description.size() <= 1000 &&
+             data.categoryId is string && data.categoryId.size() >= 1 && data.categoryId.size() <= 80 &&
+             data.categoryName is string && data.categoryName.size() >= 1 && data.categoryName.size() <= 100 &&
+             data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 1000 &&
+             (data.aspectRatio is int || data.aspectRatio is float) && data.aspectRatio > 0 && data.aspectRatio <= 5 &&
+             data.featured is bool &&
+             data.trending is bool &&
+             data.recommended is bool &&
+             data.collectionName is string && data.collectionName.size() <= 100 &&
+             data.keywords is string && data.keywords.size() <= 500 &&
+             (data.displayOrder is int || data.displayOrder is float) && data.displayOrder >= 0 &&
+             (data.status == 'published' || data.status == 'draft') &&
+             data.viewCount is int && data.viewCount >= 0 &&
+             data.likeCount is int && data.likeCount >= 0 &&
+             data.commentCount is int && data.commentCount >= 0 &&
+             data.unlockCount is int && data.unlockCount >= 0 &&
+             data.shareCount is int && data.shareCount >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // Safe counter step: counters can change only by +1 or -1 (never arbitrary values).
+    // Anonymous guests may increment viewCount, unlockCount, and shareCount (+1);
+    // likeCount and commentCount changes require a real (non-anonymous) account.
+    // NOTE: Fully trustworthy server-only counters require Cloud Functions (Firebase Blaze plan).
+    function isValidCounterStep(newData, oldData) {
+      let diffKeys = newData.diff(oldData).affectedKeys();
+      let dv = newData.viewCount - oldData.viewCount;
+      let dl = newData.likeCount - oldData.likeCount;
+      let dc = newData.commentCount - oldData.commentCount;
+      let du = newData.unlockCount - oldData.unlockCount;
+      let ds = newData.shareCount - oldData.shareCount;
+      return diffKeys.hasOnly(['viewCount', 'likeCount', 'commentCount', 'unlockCount', 'shareCount', 'updatedAt']) &&
+             (dv == 0 || dv == 1) &&
+             (dl == 0 || dl == 1 || dl == -1) &&
+             (dc == 0 || dc == 1 || dc == -1) &&
+             (du == 0 || du == 1) &&
+             (ds == 0 || ds == 1) &&
+             ((dl == 0 && dc == 0) || isRealUser()) &&
+             (dv != 0 || dl != 0 || dc != 0 || du != 0 || ds != 0);
+    }
+
+    function isValidImagePrompt(data) {
+      return data.promptText is string && data.promptText.size() >= 1 && data.promptText.size() <= 5000 &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCategoryItem(data) {
+      return data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             data.description is string && data.description.size() <= 300 &&
+             data.coverImageUrl is string && data.coverImageUrl.size() <= 1000 &&
+             data.imageCount is int && data.imageCount >= 0 &&
+             data.sortOrder is int && data.sortOrder >= 0 &&
+             (data.status == 'published' || data.status == 'draft') &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+             data.email is string && data.email.size() <= 150 &&
+             data.photoUrl is string && data.photoUrl.size() <= 1000 &&
+             data.likedCount is int && data.likedCount >= 0 &&
+             data.favoriteCount is int && data.favoriteCount >= 0 &&
+             data.unlockedCount is int && data.unlockedCount >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidLikeRecord(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.imageId is string && isValidId(data.imageId) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidFavoriteRecord(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.imageId is string && isValidId(data.imageId) &&
+             data.imageTitle is string && data.imageTitle.size() >= 1 && data.imageTitle.size() <= 150 &&
+             data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 1000 &&
+             data.categoryName is string && data.categoryName.size() >= 1 && data.categoryName.size() <= 100 &&
+             (data.aspectRatio is int || data.aspectRatio is float) && data.aspectRatio > 0 && data.aspectRatio <= 5 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidImageComment(data) {
+      return data.imageId is string && isValidId(data.imageId) &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 80 &&
+             data.text is string && data.text.size() >= 1 && data.text.size() <= 500 &&
+             data.reported is bool &&
+             data.reportReason is string && data.reportReason.size() <= 200 &&
+             data.adminReply is string && data.adminReply.size() <= 500 &&
+             (data.status == 'visible' || data.status == 'hidden') &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCommentReport(data) {
+      return data.commentId is string && isValidId(data.commentId) &&
+             data.imageId is string && isValidId(data.imageId) &&
+             data.reporterId is string && data.reporterId.size() >= 1 && data.reporterId.size() <= 128 &&
+             data.reason is string && data.reason.size() >= 1 && data.reason.size() <= 300 &&
+             (data.status == 'open' || data.status == 'reviewed' || data.status == 'dismissed') &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidPromptUnlock(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.imageId is string && isValidId(data.imageId) &&
+             data.imageTitle is string && data.imageTitle.size() >= 1 && data.imageTitle.size() <= 150 &&
+             data.rewardVerified is bool && data.rewardVerified == true &&
+             data.adNetwork is string && data.adNetwork.size() >= 1 && data.adNetwork.size() <= 50 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidAppNotification(data) {
+      return data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+             data.body is string && data.body.size() >= 1 && data.body.size() <= 500 &&
+             data.imageId is string && data.imageId.size() <= 128 &&
+             data.imageUrl is string && data.imageUrl.size() <= 1000 &&
+             data.categoryName is string && data.categoryName.size() <= 100 &&
+             (data.status == 'published' || data.status == 'draft') &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidAppConfigSettings(data) {
+      return data.playStoreUrl is string && data.playStoreUrl.size() >= 1 && data.playStoreUrl.size() <= 500 &&
+             data.requireLoginForPrompts is bool &&
+             data.allowComments is bool &&
+             data.welcomeHeadline is string && data.welcomeHeadline.size() >= 1 && data.welcomeHeadline.size() <= 120 &&
+             data.welcomeSubheadline is string && data.welcomeSubheadline.size() >= 1 && data.welcomeSubheadline.size() <= 250 &&
+             data.supportEmail is string && data.supportEmail.size() <= 150 &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAdvertisementSettings(data) {
+      return data.allAdsEnabled is bool &&
+             data.homeBannerEnabled is bool &&
+             data.detailBannerEnabled is bool &&
+             data.rewardedAdsEnabled is bool &&
+             data.interstitialAdsEnabled is bool &&
+             data.testAdMode is bool &&
+             data.reusePreviousUnlocks is bool &&
+             data.interstitialFrequency is int && data.interstitialFrequency >= 1 && data.interstitialFrequency <= 50 &&
+             data.adFallbackMessage is string && data.adFallbackMessage.size() >= 1 && data.adFallbackMessage.size() <= 300 &&
+             data.bannerAdUnitId is string && data.bannerAdUnitId.size() >= 1 && data.bannerAdUnitId.size() <= 120 &&
+             data.rewardedAdUnitId is string && data.rewardedAdUnitId.size() >= 1 && data.rewardedAdUnitId.size() <= 120 &&
+             data.interstitialAdUnitId is string && data.interstitialAdUnitId.size() >= 1 && data.interstitialAdUnitId.size() <= 120 &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // 4. Collection Match Blocks
+    match /adminUsers/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && (request.auth.uid == uid || isAdminOrOwner());
+      allow list: if isAdminOrOwner();
+      allow create, update: if isOwnerRole() &&
+                               isValidId(uid) &&
+                               incoming().keys().hasAll(['role', 'active', 'createdAt', 'updatedAt']) &&
+                               incoming().keys().hasOnly(['role', 'active', 'createdAt', 'updatedAt']) &&
+                               isValidAdminUser(incoming());
+      allow delete: if isOwnerRole() && isValidId(uid);
+    }
+
+    match /images/{imageId} {
+      allow get: if isValidId(imageId) && (existing().status == 'published' || isAdminOrOwner());
+      allow list: if existing().status == 'published';
+
+      allow create: if isAdminOrOwner() &&
+                       isValidId(imageId) &&
+                       incoming().keys().hasAll([
+                         'title', 'shortName', 'description', 'categoryId', 'categoryName', 'imageUrl',
+                         'aspectRatio', 'featured', 'trending', 'recommended', 'collectionName', 'keywords',
+                         'displayOrder', 'status', 'viewCount', 'likeCount', 'commentCount', 'unlockCount',
+                         'shareCount', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'title', 'shortName', 'description', 'categoryId', 'categoryName', 'imageUrl',
+                         'aspectRatio', 'featured', 'trending', 'recommended', 'collectionName', 'keywords',
+                         'displayOrder', 'status', 'viewCount', 'likeCount', 'commentCount', 'unlockCount',
+                         'shareCount', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidInspirationImage(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(imageId) &&
+                       isValidInspirationImage(incoming()) && (
+                         (
+                           existing().status == 'published' &&
+                           incoming().title == existing().title &&
+                           incoming().shortName == existing().shortName &&
+                           incoming().description == existing().description &&
+                           incoming().categoryId == existing().categoryId &&
+                           incoming().categoryName == existing().categoryName &&
+                           incoming().imageUrl == existing().imageUrl &&
+                           incoming().aspectRatio == existing().aspectRatio &&
+                           incoming().featured == existing().featured &&
+                           incoming().trending == existing().trending &&
+                           incoming().recommended == existing().recommended &&
+                           incoming().collectionName == existing().collectionName &&
+                           incoming().keywords == existing().keywords &&
+                           incoming().displayOrder == existing().displayOrder &&
+                           incoming().status == existing().status &&
+                           incoming().createdAt == existing().createdAt &&
+                           isValidCounterStep(incoming(), existing())
+                         ) ||
+                         isAdminOrOwner()
+                       );
+
+      allow delete: if isAdminOrOwner() && isValidId(imageId);
+    }
+
+    // Protected Prompts Vault: readable ONLY if promptUnlocks/{uid}_{imageId} exists or user is Admin/Owner
+    match /imagePrompts/{imageId} {
+      allow get: if isSignedIn() &&
+                    isValidId(imageId) && (
+                      exists(/databases/$(database)/documents/promptUnlocks/$(request.auth.uid + '_' + imageId)) ||
+                      isAdminOrOwner()
+                    );
+      allow list: if false;
+
+      allow create, update: if isAdminOrOwner() &&
+                               isValidId(imageId) &&
+                               incoming().keys().hasAll(['promptText', 'updatedAt']) &&
+                               incoming().keys().hasOnly(['promptText', 'updatedAt']) &&
+                               isValidImagePrompt(incoming());
+
+      allow delete: if isAdminOrOwner() && isValidId(imageId);
+    }
+
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId) && (existing().status == 'published' || isAdminOrOwner());
+      allow list: if existing().status == 'published';
+
+      allow create: if isAdminOrOwner() &&
+                       isValidId(categoryId) &&
+                       incoming().keys().hasAll(['name', 'description', 'coverImageUrl', 'imageCount', 'sortOrder', 'status', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['name', 'description', 'coverImageUrl', 'imageCount', 'sortOrder', 'status', 'createdAt', 'updatedAt']) &&
+                       isValidCategoryItem(incoming());
+
+      allow update: if isAdminOrOwner() &&
+                       isValidId(categoryId) &&
+                       isValidCategoryItem(incoming()) &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'coverImageUrl', 'imageCount', 'sortOrder', 'status', 'updatedAt']);
+
+      allow delete: if isAdminOrOwner() && isValidId(categoryId);
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdminOrOwner());
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'email', 'photoUrl', 'likedCount', 'favoriteCount', 'unlockedCount', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'photoUrl', 'likedCount', 'favoriteCount', 'unlockedCount', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming()) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'displayName', 'email', 'photoUrl', 'likedCount', 'favoriteCount', 'unlockedCount', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // Likes require a real (non-anonymous) account
+    match /likes/{likeId} {
+      allow get: if isSignedIn() && isValidId(likeId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isRealUser() &&
+                       isValidId(likeId) &&
+                       likeId == (request.auth.uid + '_' + incoming().imageId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'imageId', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'imageId', 'createdAt']) &&
+                       isValidLikeRecord(incoming());
+
+      allow update: if false;
+      allow delete: if isRealUser() && isValidId(likeId) && existing().userId == request.auth.uid;
+    }
+
+    match /favorites/{favoriteId} {
+      allow get: if isSignedIn() && isValidId(favoriteId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(favoriteId) &&
+                       favoriteId == (request.auth.uid + '_' + incoming().imageId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'imageId', 'imageTitle', 'imageUrl', 'categoryName', 'aspectRatio', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'imageId', 'imageTitle', 'imageUrl', 'categoryName', 'aspectRatio', 'createdAt']) &&
+                       isValidFavoriteRecord(incoming());
+
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(favoriteId) && existing().userId == request.auth.uid;
+    }
+
+    // Posting comments requires a real (non-anonymous) account; moderators/admins may moderate
+    match /comments/{commentId} {
+      allow get: if isValidId(commentId) && (existing().status == 'visible' || (isSignedIn() && existing().userId == request.auth.uid) || isModeratorOrHigher());
+      allow list: if existing().status == 'visible';
+
+      allow create: if isRealUser() &&
+                       isValidId(commentId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().reported == false &&
+                       incoming().reportReason == '' &&
+                       incoming().adminReply == '' &&
+                       incoming().status == 'visible' &&
+                       incoming().keys().hasAll([
+                         'imageId', 'userId', 'userName', 'text', 'reported', 'reportReason', 'adminReply', 'status', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'imageId', 'userId', 'userName', 'text', 'reported', 'reportReason', 'adminReply', 'status', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidImageComment(incoming());
+
+      allow update: if isRealUser() &&
+                       isValidId(commentId) &&
+                       isValidImageComment(incoming()) && (
+                         (
+                           existing().status == 'visible' &&
+                           incoming().imageId == existing().imageId &&
+                           incoming().userId == existing().userId &&
+                           incoming().userName == existing().userName &&
+                           incoming().text == existing().text &&
+                           incoming().adminReply == existing().adminReply &&
+                           incoming().status == existing().status &&
+                           incoming().createdAt == existing().createdAt &&
+                           incoming().reported == true &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['reported', 'reportReason', 'updatedAt'])
+                         ) ||
+                         (
+                           isModeratorOrHigher() &&
+                           incoming().imageId == existing().imageId &&
+                           incoming().userId == existing().userId &&
+                           incoming().userName == existing().userName &&
+                           incoming().createdAt == existing().createdAt &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['reported', 'reportReason', 'adminReply', 'status', 'updatedAt'])
+                         )
+                       );
+
+      allow delete: if isRealUser() && isValidId(commentId) && (existing().userId == request.auth.uid || isModeratorOrHigher());
+    }
+
+    // Reports collection: real users can create reports for themselves; only moderators/admins read/update
+    match /reports/{reportId} {
+      allow get, list: if isModeratorOrHigher();
+
+      allow create: if isRealUser() &&
+                       isValidId(reportId) &&
+                       incoming().reporterId == request.auth.uid &&
+                       incoming().status == 'open' &&
+                       incoming().keys().hasAll(['commentId', 'imageId', 'reporterId', 'reason', 'status', 'createdAt']) &&
+                       incoming().keys().hasOnly(['commentId', 'imageId', 'reporterId', 'reason', 'status', 'createdAt']) &&
+                       isValidCommentReport(incoming());
+
+      allow update: if isModeratorOrHigher() &&
+                       isValidId(reportId) &&
+                       isValidCommentReport(incoming()) &&
+                       incoming().commentId == existing().commentId &&
+                       incoming().imageId == existing().imageId &&
+                       incoming().reporterId == existing().reporterId &&
+                       incoming().reason == existing().reason &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+
+      allow delete: if isAdminOrOwner() && isValidId(reportId);
+    }
+
+    // PromptUnlocks: client may create only its own doc after verified reward callback.
+    // NOTE: Full protection against forged client unlocks requires AdMob Server-Side Verification (SSV)
+    // via a Cloud Function (Firebase Blaze plan) writing to promptUnlocks using Admin SDK.
+    match /promptUnlocks/{unlockId} {
+      allow get: if isSignedIn() && isValidId(unlockId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(unlockId) &&
+                       unlockId == (request.auth.uid + '_' + incoming().imageId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().rewardVerified == true &&
+                       incoming().keys().hasAll(['userId', 'imageId', 'imageTitle', 'rewardVerified', 'adNetwork', 'createdAt']) &&
+                       incoming().keys().hasOnly(['userId', 'imageId', 'imageTitle', 'rewardVerified', 'adNetwork', 'createdAt']) &&
+                       isValidPromptUnlock(incoming());
+
+      allow update, delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && (existing().status == 'published' || isAdminOrOwner());
+      allow list: if existing().status == 'published';
+
+      allow create: if isAdminOrOwner() &&
+                       isValidId(notificationId) &&
+                       incoming().keys().hasAll(['title', 'body', 'imageId', 'imageUrl', 'categoryName', 'status', 'createdAt']) &&
+                       incoming().keys().hasOnly(['title', 'body', 'imageId', 'imageUrl', 'categoryName', 'status', 'createdAt']) &&
+                       isValidAppNotification(incoming());
+
+      allow update: if isAdminOrOwner() &&
+                       isValidId(notificationId) &&
+                       isValidAppNotification(incoming()) &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['title', 'body', 'imageId', 'imageUrl', 'categoryName', 'status']);
+
+      allow delete: if isAdminOrOwner() && isValidId(notificationId);
+    }
+
+    match /appSettings/{settingId} {
+      allow get: if isValidId(settingId);
+      allow list: if false;
+
+      allow create, update: if isAdminOrOwner() &&
+                               isValidId(settingId) &&
+                               incoming().keys().hasAll(['playStoreUrl', 'requireLoginForPrompts', 'allowComments', 'welcomeHeadline', 'welcomeSubheadline', 'supportEmail', 'updatedAt']) &&
+                               incoming().keys().hasOnly(['playStoreUrl', 'requireLoginForPrompts', 'allowComments', 'welcomeHeadline', 'welcomeSubheadline', 'supportEmail', 'updatedAt']) &&
+                               isValidAppConfigSettings(incoming());
+
+      allow delete: if false;
+    }
+
+    match /advertisementSettings/{settingId} {
+      allow get: if isValidId(settingId);
+      allow list: if false;
+
+      allow create, update: if isAdminOrOwner() &&
+                               isValidId(settingId) &&
+                               incoming().keys().hasAll([
+                                 'allAdsEnabled', 'homeBannerEnabled', 'detailBannerEnabled', 'rewardedAdsEnabled',
+                                 'interstitialAdsEnabled', 'testAdMode', 'reusePreviousUnlocks', 'interstitialFrequency',
+                                 'adFallbackMessage', 'bannerAdUnitId', 'rewardedAdUnitId', 'interstitialAdUnitId', 'updatedAt'
+                               ]) &&
+                               incoming().keys().hasOnly([
+                                 'allAdsEnabled', 'homeBannerEnabled', 'detailBannerEnabled', 'rewardedAdsEnabled',
+                                 'interstitialAdsEnabled', 'testAdMode', 'reusePreviousUnlocks', 'interstitialFrequency',
+                                 'adFallbackMessage', 'bannerAdUnitId', 'rewardedAdUnitId', 'interstitialAdUnitId', 'updatedAt'
+                               ]) &&
+                               isValidAdvertisementSettings(incoming());
+
+      allow delete: if false;
+    }
+  }
+}

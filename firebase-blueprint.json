@@ -1,0 +1,274 @@
+{
+  "entities": {
+    "InspirationImage": {
+      "title": "InspirationImage",
+      "description": "Photography inspiration metadata (without promptText) managed by the external admin panel.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Display title of the photography inspiration (1..150 chars)." },
+        "shortName": { "type": "string", "description": "Short slug or compact card title (1..80 chars)." },
+        "description": { "type": "string", "description": "Editorial description or lighting notes (0..1000 chars)." },
+        "categoryId": { "type": "string", "description": "Identifier of the photography category." },
+        "categoryName": { "type": "string", "description": "Display name of the photography category." },
+        "imageUrl": { "type": "string", "description": "Direct external HTTPS image URL." },
+        "aspectRatio": { "type": "number", "description": "Original width-to-height aspect ratio (e.g., 0.75 for 3:4)." },
+        "featured": { "type": "boolean", "description": "Whether featured in the home hero carousel." },
+        "trending": { "type": "boolean", "description": "Whether highlighted in trending feeds." },
+        "recommended": { "type": "boolean", "description": "Whether highlighted in editorial recommendations." },
+        "collectionName": { "type": "string", "description": "Curated collection title." },
+        "keywords": { "type": "string", "description": "Comma-separated searchable keywords string." },
+        "displayOrder": { "type": "integer", "description": "Admin-controlled sort order index." },
+        "status": { "type": "string", "enum": ["published", "draft"], "description": "Publication status; client queries published items." },
+        "viewCount": { "type": "integer", "description": "Total unique view count." },
+        "likeCount": { "type": "integer", "description": "Total like count." },
+        "commentCount": { "type": "integer", "description": "Total visible comment count." },
+        "unlockCount": { "type": "integer", "description": "Total verified rewarded prompt unlock count." },
+        "shareCount": { "type": "integer", "description": "Total prompt share count." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update." }
+      },
+      "required": [
+        "title", "shortName", "description", "categoryId", "categoryName", "imageUrl",
+        "aspectRatio", "featured", "trending", "recommended", "collectionName", "keywords",
+        "displayOrder", "status", "viewCount", "likeCount", "commentCount", "unlockCount",
+        "shareCount", "createdAt", "updatedAt"
+      ]
+    },
+    "ImagePrompt": {
+      "title": "ImagePrompt",
+      "description": "Protected AI generation prompt stored separately from image metadata; readable only when promptUnlocks/{uid}_{imageId} exists.",
+      "type": "object",
+      "properties": {
+        "promptText": { "type": "string", "description": "Complete AI image generation prompt (1..5000 chars)." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation/update." }
+      },
+      "required": ["promptText", "updatedAt"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Role-based access control record for owners, administrators, and moderators.",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["owner", "admin", "moderator"], "description": "Assigned administrative role." },
+        "active": { "type": "boolean", "description": "Whether this admin/moderator account is currently active." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["role", "active", "createdAt", "updatedAt"]
+    },
+    "CategoryItem": {
+      "title": "CategoryItem",
+      "description": "Photography inspiration category managed by admin.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Category name." },
+        "description": { "type": "string", "description": "Category subtitle/description." },
+        "coverImageUrl": { "type": "string", "description": "External cover image URL." },
+        "imageCount": { "type": "integer", "description": "Number of images in this category." },
+        "sortOrder": { "type": "integer", "description": "Display ordering index." },
+        "status": { "type": "string", "enum": ["published", "draft"], "description": "Publication status." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["name", "description", "coverImageUrl", "imageCount", "sortOrder", "status", "createdAt", "updatedAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated end-user profile and activity counters.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the owner." },
+        "displayName": { "type": "string", "description": "User display name." },
+        "email": { "type": "string", "description": "User email address (private to owner)." },
+        "photoUrl": { "type": "string", "description": "User avatar URL." },
+        "likedCount": { "type": "integer", "description": "Total liked images count." },
+        "favoriteCount": { "type": "integer", "description": "Total favorited images count." },
+        "unlockedCount": { "type": "integer", "description": "Total unlocked prompts count." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["userId", "displayName", "email", "photoUrl", "likedCount", "favoriteCount", "unlockedCount", "createdAt", "updatedAt"]
+    },
+    "LikeRecord": {
+      "title": "LikeRecord",
+      "description": "Single user like record keyed by {userId}_{imageId} (requires real non-anonymous account).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user who liked the image." },
+        "imageId": { "type": "string", "description": "Target image ID." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["userId", "imageId", "createdAt"]
+    },
+    "FavoriteRecord": {
+      "title": "FavoriteRecord",
+      "description": "Saved favorite inspiration keyed by {userId}_{imageId}.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user who favorited the image." },
+        "imageId": { "type": "string", "description": "Target image ID." },
+        "imageTitle": { "type": "string", "description": "Denormalized image title." },
+        "imageUrl": { "type": "string", "description": "Denormalized external image URL." },
+        "categoryName": { "type": "string", "description": "Denormalized category name." },
+        "aspectRatio": { "type": "number", "description": "Image aspect ratio." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["userId", "imageId", "imageTitle", "imageUrl", "categoryName", "aspectRatio", "createdAt"]
+    },
+    "ImageComment": {
+      "title": "ImageComment",
+      "description": "User comment on an image with moderation and admin reply support.",
+      "type": "object",
+      "properties": {
+        "imageId": { "type": "string", "description": "Target image ID." },
+        "userId": { "type": "string", "description": "Author UID." },
+        "userName": { "type": "string", "description": "Author display name." },
+        "text": { "type": "string", "description": "Comment body (1..500 chars)." },
+        "reported": { "type": "boolean", "description": "Whether flagged for moderation." },
+        "reportReason": { "type": "string", "description": "Reason provided when reported." },
+        "adminReply": { "type": "string", "description": "Official administrator reply text." },
+        "status": { "type": "string", "enum": ["visible", "hidden"], "description": "Moderation visibility status." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["imageId", "userId", "userName", "text", "reported", "reportReason", "adminReply", "status", "createdAt", "updatedAt"]
+    },
+    "CommentReport": {
+      "title": "CommentReport",
+      "description": "Moderation report submitted by a user for an inappropriate comment.",
+      "type": "object",
+      "properties": {
+        "commentId": { "type": "string", "description": "ID of the reported comment." },
+        "imageId": { "type": "string", "description": "ID of the parent image." },
+        "reporterId": { "type": "string", "description": "UID of the reporting user." },
+        "reason": { "type": "string", "description": "Explanation for reporting (1..300 chars)." },
+        "status": { "type": "string", "enum": ["open", "reviewed", "dismissed"], "description": "Moderation triage status." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["commentId", "imageId", "reporterId", "reason", "status", "createdAt"]
+    },
+    "PromptUnlock": {
+      "title": "PromptUnlock",
+      "description": "Verified rewarded-ad prompt unlock record keyed by {userId}_{imageId}.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user who unlocked the prompt." },
+        "imageId": { "type": "string", "description": "Unlocked image ID." },
+        "imageTitle": { "type": "string", "description": "Title of the unlocked image." },
+        "rewardVerified": { "type": "boolean", "description": "Must be true (verified reward callback)." },
+        "adNetwork": { "type": "string", "description": "Ad network identifier (e.g., AdMob)." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["userId", "imageId", "imageTitle", "rewardVerified", "adNetwork", "createdAt"]
+    },
+    "AppNotification": {
+      "title": "AppNotification",
+      "description": "Push notification item linking to an image detail screen.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Notification headline." },
+        "body": { "type": "string", "description": "Notification message body." },
+        "imageId": { "type": "string", "description": "Target deep-linked image ID." },
+        "imageUrl": { "type": "string", "description": "Thumbnail URL." },
+        "categoryName": { "type": "string", "description": "Category label." },
+        "status": { "type": "string", "enum": ["published", "draft"], "description": "Publication status." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["title", "body", "imageId", "imageUrl", "categoryName", "status", "createdAt"]
+    },
+    "AppConfigSettings": {
+      "title": "AppConfigSettings",
+      "description": "Global application settings managed by administrators.",
+      "type": "object",
+      "properties": {
+        "playStoreUrl": { "type": "string", "description": "Official Google Play Store URL appended to shared prompts." },
+        "requireLoginForPrompts": { "type": "boolean", "description": "Whether login is required to unlock prompts." },
+        "allowComments": { "type": "boolean", "description": "Whether comments are enabled globally." },
+        "welcomeHeadline": { "type": "string", "description": "Home screen welcome title." },
+        "welcomeSubheadline": { "type": "string", "description": "Home screen welcome subtitle." },
+        "supportEmail": { "type": "string", "description": "Support contact email." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["playStoreUrl", "requireLoginForPrompts", "allowComments", "welcomeHeadline", "welcomeSubheadline", "supportEmail", "updatedAt"]
+    },
+    "AdvertisementSettings": {
+      "title": "AdvertisementSettings",
+      "description": "Remote advertisement control settings managed by administrators.",
+      "type": "object",
+      "properties": {
+        "allAdsEnabled": { "type": "boolean", "description": "Master switch for all advertisements." },
+        "homeBannerEnabled": { "type": "boolean", "description": "Home screen banner ad toggle." },
+        "detailBannerEnabled": { "type": "boolean", "description": "Image detail screen banner ad toggle." },
+        "rewardedAdsEnabled": { "type": "boolean", "description": "Rewarded video ad toggle for Generate Text." },
+        "interstitialAdsEnabled": { "type": "boolean", "description": "Interstitial ad toggle." },
+        "testAdMode": { "type": "boolean", "description": "Whether to use Google AdMob official test ad unit IDs." },
+        "reusePreviousUnlocks": { "type": "boolean", "description": "Whether previously unlocked prompts remain unlocked without re-watching ads." },
+        "interstitialFrequency": { "type": "integer", "description": "Number of detail views between interstitial ads." },
+        "adFallbackMessage": { "type": "string", "description": "Message shown when a rewarded ad fails to load." },
+        "bannerAdUnitId": { "type": "string", "description": "Production AdMob Banner Ad Unit ID." },
+        "rewardedAdUnitId": { "type": "string", "description": "Production AdMob Rewarded Ad Unit ID." },
+        "interstitialAdUnitId": { "type": "string", "description": "Production AdMob Interstitial Ad Unit ID." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": [
+        "allAdsEnabled", "homeBannerEnabled", "detailBannerEnabled", "rewardedAdsEnabled",
+        "interstitialAdsEnabled", "testAdMode", "reusePreviousUnlocks", "interstitialFrequency",
+        "adFallbackMessage", "bannerAdUnitId", "rewardedAdUnitId", "interstitialAdUnitId", "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/adminUsers/{uid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Role-based access control records (owner, admin, moderator)."
+    },
+    "/images/{imageId}": {
+      "schema": { "$ref": "#/entities/InspirationImage" },
+      "description": "Curated AI photography inspirations metadata (promptText excluded)."
+    },
+    "/imagePrompts/{imageId}": {
+      "schema": { "$ref": "#/entities/ImagePrompt" },
+      "description": "Locked AI prompts readable only after verified promptUnlocks/{uid}_{imageId}."
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/CategoryItem" },
+      "description": "Photography inspiration categories."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Per-user profile and activity counters."
+    },
+    "/likes/{likeId}": {
+      "schema": { "$ref": "#/entities/LikeRecord" },
+      "description": "User image likes keyed by {userId}_{imageId}."
+    },
+    "/favorites/{favoriteId}": {
+      "schema": { "$ref": "#/entities/FavoriteRecord" },
+      "description": "User saved favorite images keyed by {userId}_{imageId}."
+    },
+    "/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/ImageComment" },
+      "description": "User comments on images."
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/CommentReport" },
+      "description": "User-submitted moderation reports for comments."
+    },
+    "/promptUnlocks/{unlockId}": {
+      "schema": { "$ref": "#/entities/PromptUnlock" },
+      "description": "Verified rewarded-ad prompt unlocks keyed by {userId}_{imageId}."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/AppNotification" },
+      "description": "In-app and push notification records."
+    },
+    "/appSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/AppConfigSettings" },
+      "description": "Global application configuration settings."
+    },
+    "/advertisementSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/AdvertisementSettings" },
+      "description": "Global advertisement configuration settings."
+    }
+  }
+}
