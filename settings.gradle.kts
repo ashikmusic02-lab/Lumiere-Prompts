@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "Lumiere Prompts"
+rootProject.name = "PromptLens"
 
 include(":app")

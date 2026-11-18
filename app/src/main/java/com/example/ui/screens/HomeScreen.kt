@@ -457,7 +457,7 @@ private fun WelcomeHeroSection(
             ) {
                 Image(
                     painter = painterResource(id = R.drawable.img_hero_banner_1794954909272),
-                    contentDescription = "Lumiere Editorial Studio Banner",
+                    contentDescription = "PromptLens Editorial Studio Banner",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -488,7 +488,7 @@ private fun WelcomeHeroSection(
                         )
                     ) {
                         Text(
-                            text = "LUMIERE PROMPT VAULT",
+                            text = "PROMPTLENS VAULT",
                             style = MaterialTheme.typography.labelSmall,
                             color = SoftChampagneGold,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)

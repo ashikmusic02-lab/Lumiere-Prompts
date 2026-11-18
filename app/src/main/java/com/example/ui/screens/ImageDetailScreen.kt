@@ -1013,7 +1013,7 @@ private fun CommentItemCard(
  */
 fun copyPromptToClipboard(context: Context, promptText: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-    val clip = ClipData.newPlainText("Lumiere AI Prompt", promptText.trim())
+    val clip = ClipData.newPlainText("PromptLens AI Prompt", promptText.trim())
     clipboard?.setPrimaryClip(clip)
 }
 

@@ -234,7 +234,7 @@ data class AdvertisementSettings(
     val detailBannerEnabled: Boolean = true,
     val rewardedAdsEnabled: Boolean = true,
     val interstitialAdsEnabled: Boolean = false,
-    val testAdMode: Boolean = true,
+    val testAdMode: Boolean = false,
     val reusePreviousUnlocks: Boolean = true,
     val interstitialFrequency: Long = 5L,
     val adFallbackMessage: String = "Rewarded advertisement is temporarily unavailable. Please check your connection and try again.",

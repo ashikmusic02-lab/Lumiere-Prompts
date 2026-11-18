@@ -1,7 +1,7 @@
 <resources>
-    <string name="app_name">Lumiere Prompts</string>
-    <!-- Official Google AdMob sample App ID for safe initialization before production replacement -->
-    <string name="admob_app_id" translatable="false">ca-app-pub-3940256099942544~3347511713</string>
+    <string name="app_name">PromptLens</string>
+    <!-- Google AdMob App ID -->
+    <string name="admob_app_id" translatable="false">ca-app-pub-1922649184647561~5841219615</string>
     <string name="welcome_title">Curated AI Photography &amp; Prompt Vault</string>
     <string name="welcome_subtitle">Discover editorial photography inspirations and unlock verified generation prompts.</string>
     <string name="search_placeholder">Search titles, categories, or lighting styles…</string>

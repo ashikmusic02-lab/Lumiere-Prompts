@@ -182,9 +182,9 @@ fun NotificationsScreen(
                     }
                     Text(
                         text = if (isOneSignalConfigured) {
-                            "OneSignal device registration is active. Incoming image notifications open directly inside Lumiere Prompts."
+                            "OneSignal device registration is active. Incoming image notifications open directly inside PromptLens."
                         } else {
-                            "Deep-link routing (lumiere://image/{imageId}) is active. Add ONESIGNAL_APP_ID in the AI Studio Secrets panel (.env) to enable remote push delivery."
+                            "Deep-link routing (promptlens://image/{imageId}) is active. Add ONESIGNAL_APP_ID in the AI Studio Secrets panel (.env) to enable remote push delivery."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -394,7 +394,7 @@ fun ProfileScreen(
                             Spacer(modifier = Modifier.width(14.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = realUser.displayName ?: "Lumiere Member",
+                                    text = realUser.displayName ?: "PromptLens Member",
                                     style = MaterialTheme.typography.titleLarge,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
@@ -650,7 +650,7 @@ fun AuthGateScreen(
                 Box(modifier = Modifier.fillMaxSize()) {
                     Image(
                         painter = painterResource(id = R.drawable.img_hero_banner_1794954909272),
-                        contentDescription = "Lumiere Prompts Studio",
+                        contentDescription = "PromptLens Studio",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -672,7 +672,7 @@ fun AuthGateScreen(
                             .padding(20.dp)
                     ) {
                         Text(
-                            text = "LUMIERE PROMPTS",
+                            text = "PROMPTLENS",
                             style = MaterialTheme.typography.labelSmall,
                             color = SoftChampagneGold
                         )

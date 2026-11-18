@@ -697,7 +697,7 @@ class LumiereRepository(
             require(isValidDocId(uid)) { "Invalid user ID" }
             val docRef = db.collection("users").document(uid)
             val existing = docRef.get().await()
-            val displayName = (user.displayName ?: "Lumiere Creator").trim().take(80).ifBlank { "Lumiere Creator" }
+            val displayName = (user.displayName ?: "PromptLens Creator").trim().take(80).ifBlank { "PromptLens Creator" }
             val email = (user.email ?: "").trim().take(150)
             val photoUrl = (user.photoUrl?.toString() ?: "").trim().take(1000)
 
@@ -897,7 +897,7 @@ class LumiereRepository(
         val imageRef = db.collection("images").document(imageId)
         val path = commentRef.path
         return try {
-            val userName = (user.displayName ?: "Lumiere Member").trim().take(80).ifBlank { "Lumiere Member" }
+            val userName = (user.displayName ?: "PromptLens Member").trim().take(80).ifBlank { "PromptLens Member" }
             val payload = mapOf(
                 "imageId" to imageId,
                 "userId" to uid,

@@ -1,6 +1,6 @@
-# Lumiere Prompts — Firestore Schema & Admin Panel Contract
+# PromptLens — Firestore Schema & Admin Panel Contract
 
-This document defines the exact Cloud Firestore database schema, security rules contract, composite indexes, and deep-link conventions shared between the **Lumiere Prompts Android User Application** and your separate **Administrator Panel**.
+This document defines the exact Cloud Firestore database schema, security rules contract, composite indexes, and deep-link conventions shared between the **PromptLens Android User Application** (`com.farhadvarietiesstore.promptlens`) and your separate **Administrator Panel** (`com.farhadvarietiesstore.promptlensadmin`).
 
 ---
 
@@ -146,9 +146,8 @@ Stores photography categories. Only `admin` or `owner` may write.
 ## 5. Deep Link & Push Notification Format
 
 To open a specific image detail screen directly inside the app from a push notification or deep link:
-- **Custom URI Scheme**: `lumiere://image/{imageId}`
-- **HTTPS App Link**: `https://lumiereprompts.app/image/{imageId}`
-- **OneSignal Additional Data Payload**: `{ "imageId": "{imageId}" }` or `{ "targetImageId": "{imageId}" }`
+- **Custom URI Scheme**: `promptlens://image/{imageId}`
+- **OneSignal Additional Data Payload**: `{ "imageId": "{imageId}" }` or `{ "image_id": "{imageId}" }`
 
 ---
 

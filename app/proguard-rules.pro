@@ -1,4 +1,4 @@
-# ProGuard / R8 configuration for Lumiere Prompts (Release Readiness)
+# ProGuard / R8 configuration for PromptLens (Release Readiness)
 
 -keepattributes Signature, InnerClasses, EnclosingMethod, RuntimeVisibleAnnotations, AnnotationDefault
 -keepattributes SourceFile,LineNumberTable

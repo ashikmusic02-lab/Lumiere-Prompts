@@ -16,7 +16,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication">
 
-        <!-- Google AdMob App ID (Uses official Google sample App ID by default; replace in production) -->
+        <!-- Google AdMob App ID -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="@string/admob_app_id" />
@@ -32,25 +32,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Custom Deep Link Scheme: lumiere://image/{imageId} -->
+            <!-- Custom Deep Link Scheme: promptlens://image/{imageId} -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="lumiere"
+                    android:scheme="promptlens"
                     android:host="image" />
-            </intent-filter>
-
-            <!-- Verified Android App Links structure: https://lumiereprompts.app/image/{imageId} -->
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="https"
-                    android:host="lumiereprompts.app"
-                    android:pathPrefix="/image" />
             </intent-filter>
         </activity>
     </application>

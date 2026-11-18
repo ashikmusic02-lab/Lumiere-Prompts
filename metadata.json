@@ -1,5 +1,5 @@
 {
-  "name": "Lumiere Prompts",
+  "name": "PromptLens",
   "description": "Premium AI photo inspiration and prompt library for discovering curated photography styles and unlocking prompts.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

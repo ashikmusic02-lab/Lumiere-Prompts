@@ -79,7 +79,7 @@ object OneSignalDeepLinkManager {
             return
         }
 
-        // 2. Check URI data (lumiere://image/{imageId} or https://lumiereprompts.app/image/{imageId})
+        // 2. Check URI data (promptlens://image/{imageId})
         val dataUri = intent.data
         if (dataUri != null) {
             extractImageIdFromUri(dataUri)?.let { id ->
@@ -91,16 +91,9 @@ object OneSignalDeepLinkManager {
     fun extractImageIdFromUri(uri: Uri): String? {
         val scheme = uri.scheme?.lowercase() ?: return null
         // Never redirect to or accept arbitrary untrusted websites
-        if (scheme == "lumiere" && uri.host == "image") {
+        if (scheme == "promptlens" && uri.host == "image") {
             return uri.lastPathSegment?.takeIf { it.isNotBlank() }
                 ?: uri.getQueryParameter("id")
-        }
-        if ((scheme == "https" || scheme == "http") && uri.host == "lumiereprompts.app") {
-            val segments = uri.pathSegments
-            if (segments.size >= 2 && segments[0] == "image") {
-                return segments[1].takeIf { it.isNotBlank() }
-            }
-            return uri.getQueryParameter("imageId")
         }
         return null
     }
