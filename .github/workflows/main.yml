@@ -1,4 +1,4 @@
-name: Build PromptLens
+name: Build PromptAdmin
 
 on:
   push:
@@ -38,15 +38,6 @@ jobs:
             echo "::warning::app/google-services.json is missing. Upload it into the app/ folder."
           fi
 
-      - name: Create .env from secrets
-        env:
-          ONESIGNAL_APP_ID: ${{ secrets.ONESIGNAL_APP_ID }}
-        run: |
-          : > .env
-          if [ -n "$ONESIGNAL_APP_ID" ]; then
-            echo "ONESIGNAL_APP_ID=$ONESIGNAL_APP_ID" >> .env
-          fi
-
       # One key for everything: debug builds are signed with the same key as release builds,
       # so the SHA fingerprints in Firebase never change.
       - name: Prepare signing key
@@ -78,7 +69,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: promptlens-debug-apk
+          name: promptadmin-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 7
 
@@ -98,7 +89,7 @@ jobs:
         if: ${{ github.event.inputs.build_release == 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: promptlens-release
+          name: promptadmin-release
           path: |
             app/build/outputs/bundle/release/*.aab
             app/build/outputs/apk/release/*.apk
