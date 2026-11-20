@@ -2,18 +2,17 @@ package com.example.ads
 
 import android.app.Activity
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.ViewGroup
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -28,7 +27,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.example.BuildConfig
 import com.example.model.AdvertisementSettings
 import com.google.android.gms.ads.AdError
 import com.google.android.gms.ads.AdListener
@@ -44,196 +42,372 @@ import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
 import com.google.android.gms.ads.rewarded.RewardedAd
 import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
 import com.google.android.gms.ads.rewarded.ServerSideVerificationOptions
-
-sealed interface RewardedAdFlowState {
-    data object Idle : RewardedAdFlowState
-    data object LoadingAd : RewardedAdFlowState
-    data object ShowingAd : RewardedAdFlowState
-    data object RewardVerified : RewardedAdFlowState
-    data class Failed(val fallbackMessage: String) : RewardedAdFlowState
-}
+import com.google.android.ump.ConsentInformation
+import com.google.android.ump.ConsentRequestParameters
+import com.google.android.ump.UserMessagingPlatform
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 object AdMobManager {
     private const val TAG = "AdMobManager"
+    private const val REWARDED_LOAD_TIMEOUT_MS = 7_000L
+    private const val INTERSTITIAL_COOLDOWN_MS = 60_000L
 
-    // Official Google AdMob Test Ad Unit IDs
+    // Official Google AdMob Test Ad Unit IDs (used only when testAdMode == true in Firestore)
     const val TEST_BANNER_AD_UNIT_ID = "ca-app-pub-3940256099942544/6300978111"
     const val TEST_REWARDED_AD_UNIT_ID = "ca-app-pub-3940256099942544/5224354917"
     const val TEST_INTERSTITIAL_AD_UNIT_ID = "ca-app-pub-3940256099942544/1033173712"
 
     @Volatile
-    private var initialized = false
+    private var mobileAdsInitialized = false
+
+    private val _canRequestAdsFlow = MutableStateFlow(false)
+    val canRequestAdsFlow: StateFlow<Boolean> = _canRequestAdsFlow.asStateFlow()
+
+    private val _isPrivacyOptionsRequiredFlow = MutableStateFlow(false)
+    val isPrivacyOptionsRequiredFlow: StateFlow<Boolean> = _isPrivacyOptionsRequiredFlow.asStateFlow()
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private var cachedInterstitialAd: InterstitialAd? = null
-    private var detailOpenCounter: Int = 0
+    private var cachedInterstitialUnitId: String? = null
+    private var isPreloadingInterstitial = false
 
-    fun initialize(context: Context) {
-        if (initialized) return
+    // Session tracking for Interstitial rules
+    private var postsOpenedInSessionCount: Int = 0
+    private var detailExitCount: Int = 0
+    private var lastInterstitialShownAtMs: Long = 0L
+    private var rewardedAdShownInCurrentVisit: Boolean = false
+
+    /**
+     * Requests Google User Messaging Platform (UMP) consent information at launch,
+     * shows the consent form if required, and initializes MobileAds only after `canRequestAds()`.
+     */
+    fun requestConsentAndInitializeAds(activity: Activity) {
         runCatching {
-            MobileAds.initialize(context.applicationContext) { status ->
-                Log.d(TAG, "AdMob initialized: $status")
+            val params = ConsentRequestParameters.Builder()
+                .setTagForUnderAgeOfConsent(false)
+                .build()
+            val consentInfo = UserMessagingPlatform.getConsentInformation(activity)
+
+            consentInfo.requestConsentInfoUpdate(
+                activity,
+                params,
+                {
+                    UserMessagingPlatform.loadAndShowConsentFormIfRequired(activity) { formError ->
+                        if (formError != null) {
+                            Log.w(TAG, "UMP consent form warning: ${formError.message}")
+                        }
+                        updateConsentFlags(activity, consentInfo)
+                    }
+                },
+                { requestError ->
+                    Log.w(TAG, "UMP consent update warning: ${requestError.message}")
+                    updateConsentFlags(activity, consentInfo)
+                }
+            )
+
+            // Check if consent was already gathered in a previous session
+            if (consentInfo.canRequestAds()) {
+                updateConsentFlags(activity, consentInfo)
             }
-            initialized = true
-        }.onFailure { e ->
-            Log.w(TAG, "AdMob initialization warning: ${e.message}")
+        }.onFailure {
+            // Safe fallback if UMP fails in non-GMS environment
+            _canRequestAdsFlow.value = true
+            initializeMobileAdsIfAllowed(activity)
         }
+    }
+
+    private fun updateConsentFlags(context: Context, consentInfo: ConsentInformation) {
+        val allowed = runCatching { consentInfo.canRequestAds() }.getOrDefault(true)
+        _canRequestAdsFlow.value = allowed
+        _isPrivacyOptionsRequiredFlow.value = runCatching {
+            consentInfo.privacyOptionsRequirementStatus ==
+                ConsentInformation.PrivacyOptionsRequirementStatus.REQUIRED
+        }.getOrDefault(false)
+
+        if (allowed) {
+            initializeMobileAdsIfAllowed(context)
+        }
+    }
+
+    fun showPrivacyOptionsForm(activity: Activity, onDismissed: () -> Unit = {}) {
+        runCatching {
+            UserMessagingPlatform.showPrivacyOptionsForm(activity) {
+                val consentInfo = UserMessagingPlatform.getConsentInformation(activity)
+                updateConsentFlags(activity, consentInfo)
+                onDismissed()
+            }
+        }.onFailure {
+            onDismissed()
+        }
+    }
+
+    fun canRequestAds(context: Context): Boolean {
+        if (_canRequestAdsFlow.value) return true
+        val allowed = runCatching {
+            UserMessagingPlatform.getConsentInformation(context.applicationContext).canRequestAds()
+        }.getOrDefault(false)
+        if (allowed) {
+            _canRequestAdsFlow.value = true
+        }
+        return allowed
+    }
+
+    private fun initializeMobileAdsIfAllowed(context: Context) {
+        if (mobileAdsInitialized) return
+        if (!canRequestAds(context)) return
+        runCatching {
+            MobileAds.initialize(context.applicationContext) {
+                Log.d(TAG, "MobileAds initialized")
+            }
+            mobileAdsInitialized = true
+        }.onFailure { e ->
+            Log.w(TAG, "MobileAds initialization warning: ${e.message}")
+        }
+    }
+
+    private fun isValidAdUnitId(raw: String): Boolean {
+        val cleaned = raw.trim()
+        return cleaned.isNotBlank() &&
+            !cleaned.startsWith("YOUR_") &&
+            !cleaned.startsWith("REPLACE_") &&
+            cleaned.contains("/")
     }
 
     fun resolveBannerUnitId(settings: AdvertisementSettings): String {
+        if (!settings.allAdsEnabled || !settings.homeBannerEnabled && !settings.detailBannerEnabled) return ""
         if (settings.testAdMode) return TEST_BANNER_AD_UNIT_ID
-        return settings.bannerAdUnitId.ifBlank {
-            BuildConfig.ADMOB_BANNER_AD_UNIT_ID.ifBlank { TEST_BANNER_AD_UNIT_ID }
-        }
+        val candidate = settings.bannerAdUnitId.trim()
+        return if (isValidAdUnitId(candidate)) candidate else ""
     }
 
     fun resolveRewardedUnitId(settings: AdvertisementSettings): String {
+        if (!settings.allAdsEnabled || !settings.rewardedAdsEnabled) return ""
         if (settings.testAdMode) return TEST_REWARDED_AD_UNIT_ID
-        return settings.rewardedAdUnitId.ifBlank {
-            BuildConfig.ADMOB_REWARDED_AD_UNIT_ID.ifBlank { TEST_REWARDED_AD_UNIT_ID }
-        }
+        val candidate = settings.rewardedAdUnitId.trim()
+        return if (isValidAdUnitId(candidate)) candidate else ""
     }
 
     fun resolveInterstitialUnitId(settings: AdvertisementSettings): String {
+        if (!settings.allAdsEnabled || !settings.interstitialAdsEnabled) return ""
         if (settings.testAdMode) return TEST_INTERSTITIAL_AD_UNIT_ID
-        return settings.interstitialAdUnitId.ifBlank {
-            BuildConfig.ADMOB_INTERSTITIAL_AD_UNIT_ID.ifBlank { TEST_INTERSTITIAL_AD_UNIT_ID }
+        val candidate = settings.interstitialAdUnitId.trim()
+        return if (isValidAdUnitId(candidate)) candidate else ""
+    }
+
+    /**
+     * Called when an Image Detail screen is opened.
+     */
+    fun onDetailScreenEntered(context: Context, settings: AdvertisementSettings) {
+        postsOpenedInSessionCount++
+        rewardedAdShownInCurrentVisit = false
+        preloadInterstitialIfNeeded(context, settings)
+    }
+
+    /**
+     * Called when the user leaves an Image Detail screen back to the list.
+     *
+     * Interstitial rules:
+     * - Show after every N-th exit from detail screen, N = interstitialFrequency (default 5)
+     * - Never in the same visit where a rewarded ad was watched
+     * - Never on app launch/exit
+     * - Never within 60 seconds of the previous interstitial
+     * - Never before the user has opened at least 2 posts in the session
+     * - Never while the keyboard/comment box is active
+     * - Preload the next interstitial in advance
+     */
+    fun onDetailScreenExited(
+        context: Context,
+        settings: AdvertisementSettings,
+        isCommentInputActive: Boolean
+    ) {
+        val unitId = resolveInterstitialUnitId(settings)
+        if (unitId.isBlank() || !canRequestAds(context)) return
+
+        detailExitCount++
+        val frequency = settings.interstitialFrequency.coerceIn(1L, 50L).toInt()
+        val now = System.currentTimeMillis()
+        val cooldownElapsed = (now - lastInterstitialShownAtMs) >= INTERSTITIAL_COOLDOWN_MS
+
+        val eligibleToShow = !isCommentInputActive &&
+            !rewardedAdShownInCurrentVisit &&
+            postsOpenedInSessionCount >= 2 &&
+            (detailExitCount % frequency == 0) &&
+            cooldownElapsed
+
+        val activity = context as? Activity
+        val readyAd = cachedInterstitialAd
+        if (eligibleToShow && activity != null && !activity.isFinishing && readyAd != null) {
+            cachedInterstitialAd = null
+            lastInterstitialShownAtMs = now
+            readyAd.fullScreenContentCallback = object : FullScreenContentCallback() {
+                override fun onAdDismissedFullScreenContent() {
+                    preloadInterstitialIfNeeded(activity, settings)
+                }
+
+                override fun onAdFailedToShowFullScreenContent(adError: AdError) {
+                    preloadInterstitialIfNeeded(activity, settings)
+                }
+            }
+            runCatching { readyAd.show(activity) }
+        } else {
+            preloadInterstitialIfNeeded(context, settings)
+        }
+    }
+
+    fun preloadInterstitialIfNeeded(context: Context, settings: AdvertisementSettings) {
+        val unitId = resolveInterstitialUnitId(settings)
+        if (unitId.isBlank() || !canRequestAds(context)) return
+        if (cachedInterstitialAd != null && cachedInterstitialUnitId == unitId) return
+        if (isPreloadingInterstitial) return
+
+        initializeMobileAdsIfAllowed(context)
+        isPreloadingInterstitial = true
+
+        runCatching {
+            InterstitialAd.load(
+                context.applicationContext,
+                unitId,
+                AdRequest.Builder().build(),
+                object : InterstitialAdLoadCallback() {
+                    override fun onAdLoaded(ad: InterstitialAd) {
+                        isPreloadingInterstitial = false
+                        cachedInterstitialAd = ad
+                        cachedInterstitialUnitId = unitId
+                    }
+
+                    override fun onAdFailedToLoad(error: LoadAdError) {
+                        isPreloadingInterstitial = false
+                        cachedInterstitialAd = null
+                    }
+                }
+            )
+        }.onFailure {
+            isPreloadingInterstitial = false
         }
     }
 
     /**
-     * Requests and displays a Google AdMob Rewarded Advertisement.
-     *
-     * CRITICAL MONETIZATION & SSV INVARIANT:
-     * - Never unlocks the prompt before the verified [OnUserEarnedRewardListener] callback fires.
-     * - Configures [ServerSideVerificationOptions] with `userId` and `customData` (`imageId`) so that
-     *   when an AdMob SSV Cloud Function callback URL is configured on the Firebase Blaze plan,
-     *   AdMob passes `(userId, imageId)` directly to the server-side verifier.
+     * Flow for "Watch ad to view prompt":
+     * - Loads a rewarded ad with a strict 7-second timeout.
+     * - If rewarded ads are disabled in settings, the rewarded unit ID is blank, UMP consent is not
+     *   available, the ad fails to load, fails to show, or times out after 7 seconds:
+     *   DOES NOT BLOCK THE USER — immediately calls `onProceedToPrompt("none")`.
+     * - If the ad loads within 7 seconds, displays it; when the reward callback fires, calls
+     *   `onProceedToPrompt("AdMob")`.
      */
-    fun showRewardedAdForPromptUnlock(
+    fun loadAndShowRewardedAdForPrompt(
         context: Context,
         settings: AdvertisementSettings,
-        userId: String? = null,
-        imageId: String? = null,
-        onStateChanged: (RewardedAdFlowState) -> Unit,
-        onVerifiedRewardEarned: () -> Unit
+        userId: String?,
+        imageId: String,
+        onLoadingStateChanged: (Boolean) -> Unit,
+        onProceedToPrompt: (adNetworkUsed: String) -> Unit
     ) {
-        if (!settings.allAdsEnabled || !settings.rewardedAdsEnabled) {
-            onStateChanged(RewardedAdFlowState.RewardVerified)
-            onVerifiedRewardEarned()
-            return
-        }
-
-        val activity = context as? Activity
-        if (activity == null || activity.isFinishing) {
-            onStateChanged(RewardedAdFlowState.Failed(settings.adFallbackMessage))
-            return
-        }
-
-        initialize(context)
-        onStateChanged(RewardedAdFlowState.LoadingAd)
-
         val unitId = resolveRewardedUnitId(settings)
-        val adRequest = AdRequest.Builder().build()
+        val activity = context as? Activity
 
-        RewardedAd.load(
-            context.applicationContext,
-            unitId,
-            adRequest,
-            object : RewardedAdLoadCallback() {
-                override fun onAdLoaded(rewardedAd: RewardedAd) {
-                    var rewardGrantedByCallback = false
+        if (unitId.isBlank() || activity == null || activity.isFinishing || !canRequestAds(context)) {
+            onLoadingStateChanged(false)
+            onProceedToPrompt("none")
+            return
+        }
 
-                    // Attach ServerSideVerificationOptions (SSV) payload for Cloud Function SSV verification (Blaze plan)
-                    if (!userId.isNullOrBlank() || !imageId.isNullOrBlank()) {
-                        val ssvBuilder = ServerSideVerificationOptions.Builder()
-                        if (!userId.isNullOrBlank()) ssvBuilder.setUserId(userId)
-                        if (!imageId.isNullOrBlank()) ssvBuilder.setCustomData(imageId)
-                        rewardedAd.setServerSideVerificationOptions(ssvBuilder.build())
-                    }
+        initializeMobileAdsIfAllowed(context)
+        onLoadingStateChanged(true)
 
-                    rewardedAd.fullScreenContentCallback = object : FullScreenContentCallback() {
-                        override fun onAdShowedFullScreenContent() {
-                            onStateChanged(RewardedAdFlowState.ShowingAd)
+        var completedOrTimedOut = false
+        val timeoutRunnable = Runnable {
+            if (!completedOrTimedOut) {
+                completedOrTimedOut = true
+                onLoadingStateChanged(false)
+                // Timeout after 7s: do not block the user
+                onProceedToPrompt("none")
+            }
+        }
+        mainHandler.postDelayed(timeoutRunnable, REWARDED_LOAD_TIMEOUT_MS)
+
+        runCatching {
+            RewardedAd.load(
+                context.applicationContext,
+                unitId,
+                AdRequest.Builder().build(),
+                object : RewardedAdLoadCallback() {
+                    override fun onAdLoaded(rewardedAd: RewardedAd) {
+                        if (completedOrTimedOut) return
+                        completedOrTimedOut = true
+                        mainHandler.removeCallbacks(timeoutRunnable)
+
+                        if (activity.isFinishing) {
+                            onLoadingStateChanged(false)
+                            onProceedToPrompt("none")
+                            return
                         }
 
-                        override fun onAdFailedToShowFullScreenContent(adError: AdError) {
-                            Log.w(TAG, "Rewarded ad failed to show: ${adError.message}")
-                            onStateChanged(RewardedAdFlowState.Failed(settings.adFallbackMessage))
+                        var rewardEarned = false
+                        rewardedAdShownInCurrentVisit = true
+
+                        if (!userId.isNullOrBlank() || imageId.isNotBlank()) {
+                            val ssvBuilder = ServerSideVerificationOptions.Builder()
+                            if (!userId.isNullOrBlank()) ssvBuilder.setUserId(userId)
+                            if (imageId.isNotBlank()) ssvBuilder.setCustomData(imageId)
+                            rewardedAd.setServerSideVerificationOptions(ssvBuilder.build())
                         }
 
-                        override fun onAdDismissedFullScreenContent() {
-                            if (!rewardGrantedByCallback) {
-                                onStateChanged(
-                                    RewardedAdFlowState.Failed(
-                                        "Please watch the complete rewarded advertisement to unlock this prompt."
-                                    )
-                                )
+                        rewardedAd.fullScreenContentCallback = object : FullScreenContentCallback() {
+                            override fun onAdShowedFullScreenContent() {
+                                onLoadingStateChanged(false)
+                            }
+
+                            override fun onAdFailedToShowFullScreenContent(adError: AdError) {
+                                onLoadingStateChanged(false)
+                                // Ad failed to show: do not block the user
+                                onProceedToPrompt("none")
+                            }
+
+                            override fun onAdDismissedFullScreenContent() {
+                                onLoadingStateChanged(false)
+                                if (rewardEarned) {
+                                    onProceedToPrompt("AdMob")
+                                }
                             }
                         }
+
+                        rewardedAd.show(
+                            activity,
+                            OnUserEarnedRewardListener {
+                                rewardEarned = true
+                            }
+                        )
                     }
 
-                    rewardedAd.show(
-                        activity,
-                        OnUserEarnedRewardListener { rewardItem ->
-                            Log.d(TAG, "Verified reward callback received: ${rewardItem.amount} ${rewardItem.type}")
-                            rewardGrantedByCallback = true
-                            onStateChanged(RewardedAdFlowState.RewardVerified)
-                            onVerifiedRewardEarned()
-                        }
-                    )
+                    override fun onAdFailedToLoad(loadAdError: LoadAdError) {
+                        if (completedOrTimedOut) return
+                        completedOrTimedOut = true
+                        mainHandler.removeCallbacks(timeoutRunnable)
+                        onLoadingStateChanged(false)
+                        // Ad failed to load: do not block the user
+                        onProceedToPrompt("none")
+                    }
                 }
-
-                override fun onAdFailedToLoad(loadAdError: LoadAdError) {
-                    Log.w(TAG, "Rewarded ad failed to load: ${loadAdError.message}")
-                    onStateChanged(RewardedAdFlowState.Failed(settings.adFallbackMessage))
-                }
+            )
+        }.onFailure {
+            if (!completedOrTimedOut) {
+                completedOrTimedOut = true
+                mainHandler.removeCallbacks(timeoutRunnable)
+                onLoadingStateChanged(false)
+                onProceedToPrompt("none")
             }
-        )
-    }
-
-    fun onDetailScreenOpened(context: Context, settings: AdvertisementSettings) {
-        if (!settings.allAdsEnabled || !settings.interstitialAdsEnabled) return
-        val frequency = settings.interstitialFrequency.coerceIn(1L, 50L).toInt()
-        detailOpenCounter++
-        val activity = context as? Activity ?: return
-
-        if (detailOpenCounter % frequency == 0) {
-            val ad = cachedInterstitialAd
-            if (ad != null) {
-                ad.show(activity)
-                cachedInterstitialAd = null
-            }
-            preloadInterstitial(context, settings)
-        } else if (cachedInterstitialAd == null) {
-            preloadInterstitial(context, settings)
         }
-    }
-
-    private fun preloadInterstitial(context: Context, settings: AdvertisementSettings) {
-        initialize(context)
-        val unitId = resolveInterstitialUnitId(settings)
-        InterstitialAd.load(
-            context.applicationContext,
-            unitId,
-            AdRequest.Builder().build(),
-            object : InterstitialAdLoadCallback() {
-                override fun onAdLoaded(ad: InterstitialAd) {
-                    cachedInterstitialAd = ad
-                }
-
-                override fun onAdFailedToLoad(error: LoadAdError) {
-                    cachedInterstitialAd = null
-                }
-            }
-        )
     }
 }
 
 /**
- * Clean, policy-compliant Google AdMob Banner Ad container.
- * - Independently controlled by AdvertisementSettings.
- * - Collapses completely (zero height, zero empty gap) while loading or if loading fails.
- * - Never overlaps images or action buttons.
+ * Clean Banner Ad container with NO "SPONSORED" label or decorative text.
+ * - Renders only when `allAdsEnabled`, `enabledForPlacement`, `canRequestAds`, and a valid unit ID exist.
+ * - Collapses completely (0.dp) while loading or if loading fails.
  */
 @Composable
 fun LumiereBannerAdSlot(
@@ -242,20 +416,27 @@ fun LumiereBannerAdSlot(
     modifier: Modifier = Modifier,
     testTagName: String = "admob_banner_slot"
 ) {
-    val shouldShow = settings.allAdsEnabled && enabledForPlacement
-    if (!shouldShow) return
-
     val context = LocalContext.current
-    val unitId = remember(settings.testAdMode, settings.bannerAdUnitId) {
+    val canRequestAds by AdMobManager.canRequestAdsFlow.collectAsStateWithFallback(
+        initial = AdMobManager.canRequestAds(context)
+    )
+    val unitId = remember(settings) {
         AdMobManager.resolveBannerUnitId(settings)
     }
+
+    val shouldShow = settings.allAdsEnabled &&
+        enabledForPlacement &&
+        canRequestAds &&
+        unitId.isNotBlank()
+
+    if (!shouldShow) return
+
     var adLoadedSuccessfully by remember(unitId) { mutableStateOf(false) }
     var adFailed by remember(unitId) { mutableStateOf(false) }
 
     if (adFailed) return
 
     val adView = remember(unitId) {
-        AdMobManager.initialize(context)
         AdView(context).apply {
             setAdSize(AdSize.BANNER)
             adUnitId = unitId
@@ -274,7 +455,8 @@ fun LumiereBannerAdSlot(
                     adFailed = true
                 }
             }
-            loadAd(AdRequest.Builder().build())
+            runCatching { loadAd(AdRequest.Builder().build()) }
+                .onFailure { adFailed = true }
         }
     }
 
@@ -285,40 +467,32 @@ fun LumiereBannerAdSlot(
     }
 
     if (adLoadedSuccessfully) {
-        Column(
+        Box(
             modifier = modifier
                 .fillMaxWidth()
                 .testTag(testTagName)
                 .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-                .border(
-                    width = 1.dp,
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                    shape = RoundedCornerShape(14.dp)
-                )
-                .padding(vertical = 6.dp, horizontal = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                .padding(vertical = 4.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = "SPONSORED",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-                modifier = Modifier.padding(bottom = 4.dp)
+            AndroidView(
+                factory = { adView },
+                modifier = Modifier.fillMaxWidth()
             )
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ) {
-                AndroidView(
-                    factory = { adView },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
         }
     } else {
-        // Zero-height attachment so AdView can complete its initial load without leaving any visible gap
         Box(modifier = Modifier.size(0.dp).alpha(0f)) {
             AndroidView(factory = { adView })
         }
     }
+}
+
+@Composable
+private fun <T> StateFlow<T>.collectAsStateWithFallback(initial: T): androidx.compose.runtime.State<T> {
+    val state = remember { mutableStateOf(initial) }
+    androidx.compose.runtime.LaunchedEffect(this) {
+        collect { state.value = it }
+    }
+    return state
 }

@@ -2,11 +2,119 @@
     <string name="app_name">PromptLens</string>
     <!-- Google AdMob App ID -->
     <string name="admob_app_id" translatable="false">ca-app-pub-1922649184647561~5841219615</string>
-    <string name="welcome_title">Curated AI Photography &amp; Prompt Vault</string>
-    <string name="welcome_subtitle">Discover editorial photography inspirations and unlock verified generation prompts.</string>
-    <string name="search_placeholder">Search titles, categories, or lighting styles…</string>
-    <string name="generate_text_cta">Generate Text</string>
-    <string name="copy_text_cta">Copy Text</string>
-    <string name="share_text_cta">Share Text</string>
+
+    <!-- Bottom Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_categories">Categories</string>
+    <string name="nav_saved">Saved</string>
+    <string name="nav_notifications">Notifications</string>
+    <string name="nav_profile">Profile</string>
+
+    <!-- Connectivity & Offline -->
+    <string name="offline_banner_message">No internet connection. Turn on mobile data or Wi-Fi.</string>
+    <string name="turn_on_internet_message">Please turn on your internet connection</string>
+
+    <!-- Home & Search -->
+    <string name="search_placeholder">Search inspirations…</string>
+    <string name="category_all">All</string>
+    <string name="section_featured">Featured</string>
+    <string name="empty_inspirations">No inspirations yet</string>
+    <string name="empty_search_results">No matching results</string>
+    <string name="error_loading_content">Could not load content</string>
+    <string name="retry_action">Retry</string>
+    <string name="refresh_action">Refresh</string>
+
+    <!-- Categories & Sorting -->
+    <string name="categories_title">Categories</string>
+    <string name="empty_categories">No categories yet</string>
+    <string name="sort_label">Sort</string>
+    <string name="sort_latest">Latest</string>
+    <string name="sort_trending">Trending</string>
+    <string name="sort_most_liked">Most Liked</string>
+
+    <!-- Image Detail & Prompt -->
+    <string name="watch_ad_to_view_prompt">Watch ad to view prompt</string>
+    <string name="prompt_heading">Prompt</string>
+    <string name="copy_action">Copy</string>
+    <string name="copied_message">Copied</string>
+    <string name="share_action">Share</string>
+    <string name="save_action">Save</string>
+    <string name="saved_action">Saved</string>
+    <string name="like_action">Like</string>
+    <string name="back_action">Back</string>
+    <string name="prompt_unavailable">Prompt is not available right now</string>
+
+    <!-- Comments & Moderation -->
+    <string name="comments_header">Comments (%1$d)</string>
+    <string name="comment_placeholder">Add a comment…</string>
+    <string name="comment_respect_note">Be respectful. Abusive comments are removed.</string>
+    <string name="no_comments_yet">No comments yet</string>
+    <string name="reply_from_promptlens">Reply from PromptLens</string>
+    <string name="delete_comment">Delete</string>
+    <string name="report_comment">Report</string>
+    <string name="block_user">Block user</string>
+    <string name="user_blocked_message">User blocked</string>
+    <string name="report_dialog_title">Report comment</string>
+    <string name="report_reason_label">Reason</string>
+    <string name="report_default_reason">Inappropriate or spam comment</string>
+    <string name="submit_action">Submit</string>
+    <string name="cancel_action">Cancel</string>
+    <string name="report_submitted_message">Report submitted</string>
+
+    <!-- Sign-in Prompt -->
+    <string name="sign_in_required_title">Sign in with Google</string>
+    <string name="sign_in_required_body">Sign in with your Google account to continue.</string>
+
+    <!-- Saved Tab -->
+    <string name="saved_title">Saved</string>
+    <string name="empty_saved">No saved posts yet</string>
+    <string name="go_to_home">Go to Home</string>
+
+    <!-- Notifications Tab -->
+    <string name="notifications_title">Notifications</string>
+    <string name="empty_notifications">No notifications yet</string>
+    <string name="post_no_longer_available">This post is no longer available</string>
+    <string name="just_now">Just now</string>
+    <string name="minutes_ago">%1$dm ago</string>
+    <string name="hours_ago">%1$dh ago</string>
+    <string name="days_ago">%1$dd ago</string>
+
+    <!-- Profile & Settings -->
+    <string name="profile_title">Profile</string>
     <string name="sign_in_with_google">Sign in with Google</string>
+    <string name="signed_in_message">Signed in</string>
+    <string name="signed_out_message">Signed out</string>
+    <string name="guest_user_title">Welcome to PromptLens</string>
+    <string name="language_label">Language</string>
+    <string name="language_english" translatable="false">English</string>
+    <string name="language_bangla" translatable="false">বাংলা</string>
+    <string name="theme_label">Theme</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_system">System</string>
+    <string name="notifications_settings_label">Notification settings</string>
+    <string name="ad_privacy_settings_label">Ad privacy settings</string>
+    <string name="privacy_policy_label">Privacy Policy</string>
+    <string name="terms_of_use_label">Terms of Use</string>
+    <string name="about_label">About</string>
+    <string name="about_version_format">Version %1$s</string>
+    <string name="contact_support_label">Contact support</string>
+    <string name="share_app_label">Share app</string>
+    <string name="rate_app_label">Rate app</string>
+    <string name="clear_image_cache_label">Clear image cache</string>
+    <string name="image_cache_cleared">Image cache cleared</string>
+    <string name="sign_out_label">Sign out</string>
+    <string name="delete_account_label">Delete account</string>
+    <string name="delete_account_confirm_title">Delete account?</string>
+    <string name="delete_account_confirm_body">This will permanently delete your account, saved posts, likes, and comments.</string>
+    <string name="delete_account_reauth_message">Please sign in with Google again to confirm account deletion.</string>
+    <string name="account_deleted_message">Account deleted</string>
+
+    <!-- Terms of Use -->
+    <string name="terms_acceptable_use_title">1. Acceptable Use</string>
+    <string name="terms_acceptable_use_body">PromptLens provides photography inspirations and image-generation prompts for personal and creative use. Do not misuse the service, scrape content, or attempt to disrupt application availability.</string>
+    <string name="terms_comments_rules_title">2. Comments Rules</string>
+    <string name="terms_comments_rules_body">Keep discussions respectful and constructive. Spam, harassment, hate speech, or abusive comments are strictly prohibited and will be removed. Users may report inappropriate comments or block other users at any time.</string>
+    <string name="terms_content_rights_title">3. Content Rights</string>
+    <string name="terms_content_rights_body">All featured reference images, titles, and prompts remain the property of PromptLens and their respective creators. Prompts may be copied and shared for generating your own creative artwork.</string>
 </resources>

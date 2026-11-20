@@ -118,6 +118,8 @@ dependencies {
   implementation(libs.firebase.appcheck.playintegrity)
   implementation(libs.firebase.appcheck.debug)
   implementation(libs.play.services.ads)
+  implementation("com.google.android.ump:user-messaging-platform:3.1.0")
+  implementation("androidx.appcompat:appcompat:1.7.0")
   implementation(libs.onesignal)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)

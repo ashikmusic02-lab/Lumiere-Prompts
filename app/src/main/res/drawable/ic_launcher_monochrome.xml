@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Monochrome themed icon silhouette matching PromptLens photo cards, prompt bar, and wand sparkle -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,27 C34,24.2 36.2,22 39,22 L63,22 C65.8,22 68,24.2 68,27 L68,58 C68,60.8 65.8,63 63,63 L39,63 C36.2,63 34,60.8 34,58 Z M39,27 L39,58 L63,58 L63,27 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M53,38 A6,6 0 1,1 53,50 A6,6 0 1,1 53,38 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M77,22 L79.2,28.8 L86,31 L79.2,33.2 L77,40 L74.8,33.2 L68,31 L74.8,28.8 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M62,46 L73,35 L76.5,38.5 L65.5,49.5 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M31,67 C27.1,67 24,70.1 24,74 C24,77.9 27.1,81 31,81 L77,81 C80.9,81 84,77.9 84,74 C84,70.1 80.9,67 77,67 Z M33,71 L34.2,73.8 L37,75 L34.2,76.2 L33,79 L31.8,76.2 L29,75 L31.8,73.8 Z M41,72.5 L68,72.5 L68,75.5 L41,75.5 Z" />
+</vector>

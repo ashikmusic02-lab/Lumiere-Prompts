@@ -1,12 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,675 +11,400 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
+import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.LocalFireDepartment
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.ImageSearch
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.ads.LumiereBannerAdSlot
 import com.example.model.AdvertisementSettings
-import com.example.model.AppConfigSettings
 import com.example.model.CategoryItem
-import com.example.model.ImageCollectionSummary
 import com.example.model.InspirationImage
 import com.example.model.UiState
-import com.example.ui.components.CategoryShowcaseCard
-import com.example.ui.components.CollectionShowcaseCard
 import com.example.ui.components.FeaturedHeroCard
 import com.example.ui.components.InspirationGalleryCard
-import com.example.ui.components.ShimmerPlaceholderBox
-import com.example.ui.theme.ChampagneGold
-import com.example.ui.theme.LuminousViolet
-import com.example.ui.theme.SoftChampagneGold
+import com.example.ui.components.ShimmerSkeletonCard
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     imagesUiState: UiState<List<InspirationImage>>,
-    featuredImagesOverride: List<InspirationImage> = emptyList(),
-    trendingImagesOverride: List<InspirationImage> = emptyList(),
-    recommendedImagesOverride: List<InspirationImage> = emptyList(),
-    hasMoreImages: Boolean = false,
-    isLoadingMoreImages: Boolean = false,
-    onLoadMoreImages: () -> Unit = {},
-    onRefreshCatalog: () -> Unit = {},
     categories: List<CategoryItem>,
-    collections: List<ImageCollectionSummary>,
-    recentlyViewedIds: List<String>,
     likedIds: Set<String>,
-    favoritedIds: Set<String>,
-    unlockedIds: Set<String>,
-    appConfigSettings: AppConfigSettings,
     advertisementSettings: AdvertisementSettings,
-    onOpenImageDetail: (InspirationImage) -> Unit,
-    onSelectCategory: (String) -> Unit,
-    onOpenSearch: () -> Unit,
-    onToggleLike: (InspirationImage) -> Unit,
-    onToggleFavorite: (InspirationImage) -> Unit,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+    onImageClick: (InspirationImage) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val columnsCount = if (maxWidth >= 700.dp) 3 else 2
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var selectedCategoryId by rememberSaveable { mutableStateOf("all") }
 
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .testTag("home_screen_list"),
-            contentPadding = PaddingValues(bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
-        ) {
-            // 1. Welcome Hero Section & Search Bar
-            item {
-                WelcomeHeroSection(
-                    headline = appConfigSettings.welcomeHeadline,
-                    subheadline = appConfigSettings.welcomeSubheadline,
-                    onSearchClick = onOpenSearch
-                )
-            }
+    val publishedCategories = remember(categories) {
+        categories.filter { it.status == "published" }.sortedBy { it.sortOrder }
+    }
 
-            when (imagesUiState) {
-                is UiState.Loading -> {
-                    item {
-                        HomeLoadingSkeleton()
-                    }
-                }
-                is UiState.Error -> {
-                    item {
-                        ContentPreparedEmptyCard(
-                            title = "Content is being prepared",
-                            subtitle = imagesUiState.message,
-                            actionLabel = "Retry Connection",
-                            onAction = onRefreshCatalog
-                        )
-                    }
-                }
-                is UiState.Success -> {
-                    val allImages = imagesUiState.data
-                    if (allImages.isEmpty()) {
-                        item {
-                            ContentPreparedEmptyCard(
-                                title = "Content is being prepared",
-                                subtitle = "Our curators are preparing photography inspirations and AI prompts in Firestore. Connect your google-services.json or publish items from your Admin Panel to populate the gallery.",
-                                actionLabel = "Refresh Gallery",
-                                onAction = onRefreshCatalog
-                            )
-                        }
-                    } else {
-                        val featuredImages = featuredImagesOverride.ifEmpty {
-                            allImages.filter { it.featured }.ifEmpty { allImages.take(6) }
-                        }
-                        val trendingImages = trendingImagesOverride.ifEmpty {
-                            allImages.filter { it.trending }
-                                .sortedByDescending { it.viewCount + it.likeCount * 3 }
-                                .ifEmpty { allImages.take(8) }
-                        }
-                        val recommendedImages = recommendedImagesOverride.ifEmpty {
-                            allImages.filter { it.recommended }.ifEmpty { allImages.take(8) }
-                        }
-                        val latestImages = allImages.sortedWith(
-                            compareBy<InspirationImage> { it.displayOrder }
-                                .thenByDescending { it.createdAt?.seconds ?: 0L }
-                        )
-                        val recentlyViewedImages = recentlyViewedIds.mapNotNull { id ->
-                            allImages.firstOrNull { it.id == id }
-                        }
+    val allPublishedImages = remember(imagesUiState) {
+        (imagesUiState as? UiState.Success)?.data
+            ?.filter { it.status == "published" }
+            .orEmpty()
+    }
 
-                        // 2. Featured Images Carousel
-                        if (featuredImages.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "Featured Inspirations",
-                                    subtitle = "Hand-picked editorial compositions & master prompts",
-                                    icon = Icons.Outlined.AutoAwesome,
-                                    onActionClick = onOpenSearch
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                LazyRow(
-                                    contentPadding = PaddingValues(horizontal = 20.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                                ) {
-                                    items(featuredImages, key = { "featured_${it.id}" }) { image ->
-                                        FeaturedHeroCard(
-                                            image = image,
-                                            isUnlocked = unlockedIds.contains(image.id),
-                                            onClick = { onOpenImageDetail(image) }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        // Home Banner Ad Slot (Collapses to 0dp if unavailable)
-                        item {
-                            LumiereBannerAdSlot(
-                                settings = advertisementSettings,
-                                enabledForPlacement = advertisementSettings.homeBannerEnabled,
-                                modifier = Modifier.padding(horizontal = 20.dp),
-                                testTagName = "home_banner_ad"
-                            )
-                        }
-
-                        // 3. Popular Categories
-                        if (categories.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "Popular Categories",
-                                    subtitle = "Explore curated photography genres",
-                                    onActionClick = onOpenSearch
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                LazyRow(
-                                    contentPadding = PaddingValues(horizontal = 20.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    items(categories, key = { "cat_${it.id}" }) { category ->
-                                        CategoryShowcaseCard(
-                                            category = category,
-                                            onClick = { onSelectCategory(category.name) }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        // 4. Trending Images
-                        if (trendingImages.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "Trending Now",
-                                    subtitle = "Most viewed & unlocked prompts this week",
-                                    icon = Icons.Outlined.LocalFireDepartment,
-                                    onActionClick = onOpenSearch
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                LazyRow(
-                                    contentPadding = PaddingValues(horizontal = 20.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                                ) {
-                                    items(trendingImages, key = { "trending_${it.id}" }) { image ->
-                                        Box(modifier = Modifier.width(210.dp)) {
-                                            InspirationGalleryCard(
-                                                image = image,
-                                                isLiked = likedIds.contains(image.id),
-                                                isFavorited = favoritedIds.contains(image.id),
-                                                isUnlocked = unlockedIds.contains(image.id),
-                                                onClick = { onOpenImageDetail(image) },
-                                                onToggleLike = { onToggleLike(image) },
-                                                onToggleFavorite = { onToggleFavorite(image) }
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // 5. Popular Image Collections
-                        if (collections.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "Popular Collections",
-                                    subtitle = "Signature lighting & aesthetic series"
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                LazyRow(
-                                    contentPadding = PaddingValues(horizontal = 20.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                                ) {
-                                    items(collections, key = { "col_${it.name}" }) { collection ->
-                                        CollectionShowcaseCard(
-                                            collection = collection,
-                                            onClick = {
-                                                collection.images.firstOrNull()?.let(onOpenImageDetail)
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        // 6. Recently Viewed Images
-                        if (recentlyViewedImages.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "Recently Viewed",
-                                    subtitle = "Continue exploring your recent inspirations",
-                                    icon = Icons.Outlined.History
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                LazyRow(
-                                    contentPadding = PaddingValues(horizontal = 20.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                                ) {
-                                    items(recentlyViewedImages, key = { "recent_${it.id}" }) { image ->
-                                        Box(modifier = Modifier.width(185.dp)) {
-                                            InspirationGalleryCard(
-                                                image = image,
-                                                isLiked = likedIds.contains(image.id),
-                                                isFavorited = favoritedIds.contains(image.id),
-                                                isUnlocked = unlockedIds.contains(image.id),
-                                                onClick = { onOpenImageDetail(image) },
-                                                onToggleLike = { onToggleLike(image) },
-                                                onToggleFavorite = { onToggleFavorite(image) }
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // 7. Recommended Images (Responsive Grid Rows)
-                        if (recommendedImages.isNotEmpty()) {
-                            item {
-                                SectionHeader(
-                                    title = "Recommended For You",
-                                    subtitle = "Curated lighting setups & high-detail prompts",
-                                    icon = Icons.Outlined.AutoAwesome,
-                                    onActionClick = onOpenSearch
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                ResponsiveGalleryGrid(
-                                    images = recommendedImages,
-                                    columnsCount = columnsCount,
-                                    likedIds = likedIds,
-                                    favoritedIds = favoritedIds,
-                                    unlockedIds = unlockedIds,
-                                    onOpenImageDetail = onOpenImageDetail,
-                                    onToggleLike = onToggleLike,
-                                    onToggleFavorite = onToggleFavorite
-                                )
-                            }
-                        }
-
-                        // 8. Latest Images (Paginated)
-                        item {
-                            SectionHeader(
-                                title = "Latest Releases",
-                                subtitle = "Freshly added photography inspirations",
-                                onActionClick = onOpenSearch
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            ResponsiveGalleryGrid(
-                                images = latestImages,
-                                columnsCount = columnsCount,
-                                likedIds = likedIds,
-                                favoritedIds = favoritedIds,
-                                unlockedIds = unlockedIds,
-                                onOpenImageDetail = onOpenImageDetail,
-                                onToggleLike = onToggleLike,
-                                onToggleFavorite = onToggleFavorite
-                            )
-
-                            if (hasMoreImages) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 16.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    OutlinedButton(
-                                        onClick = onLoadMoreImages,
-                                        enabled = !isLoadingMoreImages,
-                                        shape = RoundedCornerShape(50),
-                                        modifier = Modifier.testTag("home_load_more_button")
-                                    ) {
-                                        if (isLoadingMoreImages) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(18.dp),
-                                                strokeWidth = 2.dp
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                        }
-                                        Text("Load More Inspirations")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    val filteredImages = remember(allPublishedImages, searchQuery, selectedCategoryId) {
+        val query = searchQuery.trim().lowercase()
+        allPublishedImages.filter { img ->
+            val matchesCategory = selectedCategoryId == "all" ||
+                img.categoryId == selectedCategoryId
+            val matchesQuery = query.isEmpty() ||
+                img.title.lowercase().contains(query) ||
+                img.shortName.lowercase().contains(query) ||
+                img.categoryName.lowercase().contains(query) ||
+                img.description.lowercase().contains(query) ||
+                img.keywords.lowercase().contains(query)
+            matchesCategory && matchesQuery
         }
     }
-}
 
-@Composable
-private fun ContentPreparedEmptyCard(
-    title: String,
-    subtitle: String,
-    actionLabel: String,
-    onAction: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 12.dp)
-            .testTag("content_prepared_empty_state"),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = ChampagneGold.copy(alpha = 0.16f),
-                modifier = Modifier.size(64.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Outlined.AutoAwesome,
-                        contentDescription = null,
-                        tint = ChampagneGold,
-                        modifier = Modifier.size(30.dp)
-                    )
-                }
-            }
-            Text(
-                text = title,
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            OutlinedButton(
-                onClick = onAction,
-                shape = RoundedCornerShape(50)
-            ) {
-                Text(actionLabel)
-            }
-        }
-    }
-}
-
-@Composable
-private fun WelcomeHeroSection(
-    headline: String,
-    subheadline: String,
-    onSearchClick: () -> Unit
-) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp)
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("home_screen_container")
     ) {
-        Card(
-            shape = RoundedCornerShape(26.dp),
-            modifier = Modifier.fillMaxWidth()
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = onRefresh,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(215.dp)
+            LazyVerticalStaggeredGrid(
+                columns = StaggeredGridCells.Fixed(2),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 12.dp,
+                    bottom = 20.dp
+                ),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalItemSpacing = 12.dp
             ) {
-                Image(
-                    painter = painterResource(id = R.drawable.img_hero_banner_1794954909272),
-                    contentDescription = "PromptLens Editorial Studio Banner",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Black.copy(alpha = 0.45f),
-                                    Color.Black.copy(alpha = 0.88f)
-                                )
-                            )
-                        )
-                )
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(20.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = ChampagneGold.copy(alpha = 0.2f),
-                        modifier = Modifier.border(
-                            width = 1.dp,
-                            color = ChampagneGold.copy(alpha = 0.65f),
-                            shape = RoundedCornerShape(50)
-                        )
+                // 1. Top Bar: Logo + App Name
+                item(span = StaggeredGridItemSpan.FullLine) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            text = "PROMPTLENS VAULT",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SoftChampagneGold,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_promptlens_logo),
+                                contentDescription = stringResource(R.string.app_name),
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                            )
+                            Text(
+                                text = stringResource(R.string.app_name),
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        IconButton(
+                            onClick = onRefresh,
+                            modifier = Modifier.testTag("home_refresh_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = stringResource(R.string.refresh_action),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = headline,
-                        style = MaterialTheme.typography.headlineLarge,
-                        color = Color.White,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                }
+
+                // 2. Search Field
+                item(span = StaggeredGridItemSpan.FullLine) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = {
+                            Text(
+                                text = stringResource(R.string.search_placeholder),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(
+                                    onClick = { searchQuery = "" },
+                                    modifier = Modifier.testTag("clear_home_search_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = null
+                                    )
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("home_search_input")
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = subheadline,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.82f),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                }
+
+                // 3. Category Chips (All + published categories sorted by sortOrder)
+                if (publishedCategories.isNotEmpty()) {
+                    item(span = StaggeredGridItemSpan.FullLine) {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(vertical = 2.dp),
+                            modifier = Modifier.testTag("home_category_row")
+                        ) {
+                            item {
+                                val isAllSelected = selectedCategoryId == "all"
+                                FilterChip(
+                                    selected = isAllSelected,
+                                    onClick = { selectedCategoryId = "all" },
+                                    label = {
+                                        Text(
+                                            text = stringResource(R.string.category_all),
+                                            style = MaterialTheme.typography.labelLarge
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                                        selectedLabelColor = MaterialTheme.colorScheme.primary
+                                    ),
+                                    modifier = Modifier.testTag("home_chip_all")
+                                )
+                            }
+                            items(publishedCategories, key = { it.id }) { category ->
+                                val isSelected = selectedCategoryId == category.id
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        selectedCategoryId = if (isSelected) "all" else category.id
+                                    },
+                                    label = {
+                                        Text(
+                                            text = category.name,
+                                            style = MaterialTheme.typography.labelLarge
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                                        selectedLabelColor = MaterialTheme.colorScheme.primary
+                                    ),
+                                    modifier = Modifier.testTag("home_chip_${category.id}")
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 4. Content States: Shimmer Loading, Error with Retry, or Catalog Sections
+                when (imagesUiState) {
+                    is UiState.Loading -> {
+                        items(6) { index ->
+                            ShimmerSkeletonCard(
+                                aspectRatio = if (index % 2 == 0) 0.75f else 0.9f
+                            )
+                        }
+                    }
+
+                    is UiState.Error -> {
+                        item(span = StaggeredGridItemSpan.FullLine) {
+                            HomeErrorState(
+                                message = imagesUiState.message,
+                                onRetry = onRefresh
+                            )
+                        }
+                    }
+
+                    is UiState.Success -> {
+                        if (allPublishedImages.isEmpty()) {
+                            item(span = StaggeredGridItemSpan.FullLine) {
+                                HomeEmptyState(
+                                    title = stringResource(R.string.empty_inspirations)
+                                )
+                            }
+                        } else if (filteredImages.isEmpty()) {
+                            item(span = StaggeredGridItemSpan.FullLine) {
+                                HomeEmptyState(
+                                    title = stringResource(R.string.empty_search_results)
+                                )
+                            }
+                        } else {
+                            // Featured Horizontal Row (only if featured items exist and not actively filtering by text)
+                            val featuredImages = filteredImages.filter { it.featured }
+                            if (featuredImages.isNotEmpty() && searchQuery.isBlank() && selectedCategoryId == "all") {
+                                item(span = StaggeredGridItemSpan.FullLine) {
+                                    Column(
+                                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                                        modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.section_featured),
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.onBackground,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        LazyRow(
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                            modifier = Modifier.testTag("featured_carousel")
+                                        ) {
+                                            items(featuredImages, key = { "featured_${it.id}" }) { item ->
+                                                FeaturedHeroCard(
+                                                    image = item,
+                                                    isLiked = likedIds.contains(item.id),
+                                                    onClick = { onImageClick(item) }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 2-Column Staggered Grid of posts
+                            items(filteredImages, key = { it.id }) { image ->
+                                InspirationGalleryCard(
+                                    image = image,
+                                    isLiked = likedIds.contains(image.id),
+                                    onClick = { onImageClick(image) }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
-
-        // Interactive Search Bar
-        Surface(
+        // One Banner Ad at the bottom of the Home content area above the tab bar
+        LumiereBannerAdSlot(
+            settings = advertisementSettings,
+            enabledForPlacement = advertisementSettings.homeBannerEnabled,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(54.dp)
-                .testTag("home_search_bar")
-                .clip(RoundedCornerShape(18.dp))
-                .clickable(onClick = onSearchClick),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(18.dp),
-            tonalElevation = 4.dp
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Search,
-                    contentDescription = "Search inspirations",
-                    tint = LuminousViolet,
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = "Search portraits, cinematic lighting, luxury prompts…",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
+                .padding(top = 8.dp, bottom = 4.dp)
+                .testTag("home_bottom_banner_ad")
+        )
     }
 }
 
 @Composable
-fun SectionHeader(
+private fun HomeEmptyState(
     title: String,
-    subtitle: String,
-    icon: ImageVector? = null,
-    onActionClick: (() -> Unit)? = null
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (icon != null) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = ChampagneGold,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                }
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-            }
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        if (onActionClick != null) {
-            TextButton(onClick = onActionClick) {
-                Text(
-                    text = "See All",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = "See all",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun ResponsiveGalleryGrid(
-    images: List<InspirationImage>,
-    columnsCount: Int,
-    likedIds: Set<String>,
-    favoritedIds: Set<String>,
-    unlockedIds: Set<String>,
-    onOpenImageDetail: (InspirationImage) -> Unit,
-    onToggleLike: (InspirationImage) -> Unit,
-    onToggleFavorite: (InspirationImage) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val rows = remember(images, columnsCount) {
-        images.chunked(columnsCount)
-    }
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .padding(vertical = 64.dp, horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        rows.forEach { rowItems ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                rowItems.forEach { image ->
-                    Box(modifier = Modifier.weight(1f)) {
-                        InspirationGalleryCard(
-                            image = image,
-                            isLiked = likedIds.contains(image.id),
-                            isFavorited = favoritedIds.contains(image.id),
-                            isUnlocked = unlockedIds.contains(image.id),
-                            onClick = { onOpenImageDetail(image) },
-                            onToggleLike = { onToggleLike(image) },
-                            onToggleFavorite = { onToggleFavorite(image) }
-                        )
-                    }
-                }
-                repeat(columnsCount - rowItems.size) {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
-        }
+        Icon(
+            imageVector = Icons.Outlined.ImageSearch,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+            modifier = Modifier.size(48.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
     }
 }
 
 @Composable
-private fun HomeLoadingSkeleton() {
+private fun HomeErrorState(
+    message: String,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(vertical = 64.dp, horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        ShimmerPlaceholderBox(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(280.dp)
-                .clip(RoundedCornerShape(24.dp))
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            ShimmerPlaceholderBox(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(210.dp)
-                    .clip(RoundedCornerShape(20.dp))
-            )
-            ShimmerPlaceholderBox(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(210.dp)
-                    .clip(RoundedCornerShape(20.dp))
-            )
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(
+            onClick = onRetry,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.testTag("home_retry_button")
+        ) {
+            Text(text = stringResource(R.string.retry_action))
         }
     }
 }

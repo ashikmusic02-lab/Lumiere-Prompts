@@ -20,12 +20,8 @@ enum class ThemePreference {
 }
 
 /**
- * Represents a photography inspiration item stored in Firestore `images/{imageId}`.
- *
- * SECURITY NOTE (Prompt Lock):
- * `images/{imageId}` intentionally does NOT contain `promptText`.
- * The AI generation prompt is stored exclusively in `imagePrompts/{imageId}` and can only be
- * read after a verified `promptUnlocks/{uid}_{imageId}` document exists for the user.
+ * Photography inspiration item stored in Firestore `images/{imageId}`.
+ * Exact schema per SCHEMA.md — never contains `promptText`.
  */
 @Keep
 @IgnoreExtraProperties
@@ -55,8 +51,7 @@ data class InspirationImage(
 )
 
 /**
- * Locked prompt payload stored in `imagePrompts/{imageId}`.
- * Readable only when `promptUnlocks/{uid}_{imageId}` exists for the signed-in user (or admin/owner).
+ * Prompt document stored in `imagePrompts/{imageId}`.
  */
 @Keep
 @IgnoreExtraProperties
@@ -67,7 +62,7 @@ data class ImagePromptDocument(
 )
 
 /**
- * Photography category stored in `categories/{categoryId}`.
+ * Category document stored in `categories/{categoryId}`.
  */
 @Keep
 @IgnoreExtraProperties
@@ -81,17 +76,6 @@ data class CategoryItem(
     val status: String = "published",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
-)
-
-/**
- * Derived summary for curated collections displayed on the Home screen.
- */
-data class ImageCollectionSummary(
-    val name: String,
-    val subtitle: String,
-    val coverImageUrl: String,
-    val itemCount: Int,
-    val images: List<InspirationImage>
 )
 
 /**
@@ -160,7 +144,7 @@ data class ImageComment(
 )
 
 /**
- * Moderation report on an inappropriate comment stored in `reports/{reportId}`.
+ * Moderation report stored in `reports/{reportId}`.
  */
 @Keep
 @IgnoreExtraProperties
@@ -175,8 +159,7 @@ data class CommentReport(
 )
 
 /**
- * Verified rewarded-ad prompt unlock receipt stored in `promptUnlocks/{uid}_{imageId}`.
- * Once this document exists in Firestore, security rules grant read access to `imagePrompts/{imageId}`.
+ * Prompt access receipt stored in `promptUnlocks/{uid}_{imageId}`.
  */
 @Keep
 @IgnoreExtraProperties
@@ -207,6 +190,34 @@ data class AppNotification(
 )
 
 /**
+ * Merged item displayed in the Notifications tab:
+ * either a published broadcast notification or an admin reply to the signed-in user's comment.
+ */
+sealed interface MergedNotificationItem {
+    val uniqueKey: String
+    val imageId: String
+    val timestampMs: Long
+
+    data class BroadcastItem(
+        val notification: AppNotification,
+        override val timestampMs: Long
+    ) : MergedNotificationItem {
+        override val uniqueKey: String = "notif_${notification.id}"
+        override val imageId: String = notification.imageId
+    }
+
+    data class CommentReplyItem(
+        val comment: ImageComment,
+        val postTitle: String,
+        val postThumbnailUrl: String,
+        override val timestampMs: Long
+    ) : MergedNotificationItem {
+        override val uniqueKey: String = "reply_${comment.id}"
+        override val imageId: String = comment.imageId
+    }
+}
+
+/**
  * Global application configuration stored in `appSettings/global`.
  */
 @Keep
@@ -216,14 +227,17 @@ data class AppConfigSettings(
     val playStoreUrl: String = BuildConfig.OFFICIAL_PLAY_STORE_URL,
     val requireLoginForPrompts: Boolean = false,
     val allowComments: Boolean = true,
-    val welcomeHeadline: String = "Curated Visual Poetry & AI Prompts",
-    val welcomeSubheadline: String = "Explore studio-grade photography inspirations and unlock verified generation prompts.",
-    val supportEmail: String = "",
+    val welcomeHeadline: String = "",
+    val welcomeSubheadline: String = "",
+    val supportEmail: String = AppLinks.SUPPORT_EMAIL,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
 /**
- * Global advertisement & monetization configuration stored in `advertisementSettings/global`.
+ * Global advertisement configuration stored in `advertisementSettings/global`.
+ * - If the document exists in Firestore and a unit ID is blank (""), that ad format is disabled.
+ * - If the document does NOT exist in Firestore (first run), [defaultWhenDocumentMissing] supplies
+ *   the built-in BuildConfig ad unit IDs.
  */
 @Keep
 @IgnoreExtraProperties
@@ -237,12 +251,28 @@ data class AdvertisementSettings(
     val testAdMode: Boolean = false,
     val reusePreviousUnlocks: Boolean = true,
     val interstitialFrequency: Long = 5L,
-    val adFallbackMessage: String = "Rewarded advertisement is temporarily unavailable. Please check your connection and try again.",
-    val bannerAdUnitId: String = BuildConfig.ADMOB_BANNER_AD_UNIT_ID,
-    val rewardedAdUnitId: String = BuildConfig.ADMOB_REWARDED_AD_UNIT_ID,
-    val interstitialAdUnitId: String = BuildConfig.ADMOB_INTERSTITIAL_AD_UNIT_ID,
+    val adFallbackMessage: String = "",
+    val bannerAdUnitId: String = "",
+    val rewardedAdUnitId: String = "",
+    val interstitialAdUnitId: String = "",
     @ServerTimestamp val updatedAt: Timestamp? = null
-)
+) {
+    companion object {
+        fun defaultWhenDocumentMissing(): AdvertisementSettings = AdvertisementSettings(
+            allAdsEnabled = true,
+            homeBannerEnabled = true,
+            detailBannerEnabled = true,
+            rewardedAdsEnabled = true,
+            interstitialAdsEnabled = false,
+            testAdMode = false,
+            reusePreviousUnlocks = true,
+            interstitialFrequency = 5L,
+            bannerAdUnitId = BuildConfig.ADMOB_BANNER_AD_UNIT_ID,
+            rewardedAdUnitId = BuildConfig.ADMOB_REWARDED_AD_UNIT_ID,
+            interstitialAdUnitId = BuildConfig.ADMOB_INTERSTITIAL_AD_UNIT_ID
+        )
+    }
+}
 
 /**
  * Administrator role record stored in `adminUsers/{uid}` for the separate Admin Panel project.

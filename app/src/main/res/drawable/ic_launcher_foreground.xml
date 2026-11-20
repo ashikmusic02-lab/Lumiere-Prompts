@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/img_launcher_icon_1794954908164"
+        android:drawable="@drawable/ic_promptlens_logo"
         android:gravity="center" />
 </layer-list>

@@ -13,17 +13,19 @@ import com.example.model.ImageComment
 import com.example.model.ImagePromptDocument
 import com.example.model.InspirationImage
 import com.example.model.LikeRecord
-import com.example.model.PromptUnlock
 import com.example.model.UserProfile
 import com.google.firebase.Firebase
 import com.google.firebase.analytics.FirebaseAnalytics
+import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
-import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.FirebaseFirestoreSettings
+import com.google.firebase.firestore.PersistentCacheSettings
+import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -32,75 +34,39 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 
-/**
- * Cursor-paginated result page for `images` queries.
- */
-data class PaginatedImagesResult(
-    val images: List<InspirationImage>,
-    val lastSnapshot: DocumentSnapshot?,
-    val hasMore: Boolean
-)
-
-/**
- * Plug-in hook for server-side reward verification.
- *
- * SECURITY NOTE (AdMob Server-Side Verification — SSV):
- * On the Firebase Spark (free) plan, `promptUnlocks/{uid}_{imageId}` is created by the client
- * after `OnUserEarnedRewardListener` fires and is validated by strict Firestore Security Rules.
- * Full protection against forged client unlock writes requires AdMob Server-Side Verification (SSV)
- * via a Cloud Function (which requires the Firebase Blaze plan) that verifies Google's cryptographic
- * signature and writes `promptUnlocks/{uid}_{imageId}` using the Firebase Admin SDK.
- * When upgrading to the Blaze plan, supply a custom [RewardUnlockVerifier] implementation that
- * awaits the Cloud Function SSV receipt before reading `imagePrompts/{imageId}`.
- */
-fun interface RewardUnlockVerifier {
-    suspend fun recordUnlockReceipt(
-        db: FirebaseFirestore,
-        uid: String,
-        image: InspirationImage,
-        adNetwork: String
-    )
-}
+class ReauthRequiredForDeleteException : Exception("Re-authentication required")
 
 class LumiereRepository(
     private val db: FirebaseFirestore,
-    private val analytics: FirebaseAnalytics? = null,
-    private val rewardUnlockVerifier: RewardUnlockVerifier = DefaultClientRewardUnlockVerifier
+    private val analytics: FirebaseAnalytics? = null
 ) {
-    // CRITICAL: Always initialize with R.string.firestore_database_id
     constructor(context: Context) : this(
-        FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
-        ),
+        createConfiguredFirestore(context),
         kotlin.runCatching { FirebaseAnalytics.getInstance(context.applicationContext) }.getOrNull()
     )
 
     private val auth = Firebase.auth
 
-    /**
-     * Returns the current user's UID (works for both anonymous guest users and Google-authenticated users).
-     */
     private fun requireSignedInUserId(): String {
         return auth.currentUser?.uid
-            ?: throw IllegalStateException("Session is initializing. Please try again in a moment.")
+            ?: throw IllegalStateException("Session is initializing. Please try again.")
     }
 
-    /**
-     * Ensures a signed-in UID exists (creating an anonymous Firebase Auth session if `currentUser` is null)
-     * before executing Firestore reads/writes that require a UID (views, favorites, prompt unlocks).
-     */
     suspend fun ensureSignedInUserId(): String {
         auth.currentUser?.uid?.let { return it }
-        val result = auth.signInAnonymously().await()
+        val result = withTimeout(WRITE_TIMEOUT_MS) {
+            auth.signInAnonymously().await()
+        }
         return result.user?.uid
-            ?: throw IllegalStateException("Unable to initialize anonymous guest session.")
+            ?: throw IllegalStateException("Unable to initialize guest session.")
     }
 
     private fun requireRealUser(): FirebaseUser {
         val user = auth.currentUser
         if (!GoogleSignInManager.isRealAuthenticatedUser(user)) {
-            throw IllegalStateException("Please sign in with Google to use likes, comments, and reports.")
+            throw IllegalStateException("Sign in with Google to continue.")
         }
         return user!!
     }
@@ -119,61 +85,29 @@ class LumiereRepository(
     }
 
     // =========================================================================
-    // PAGINATED & LIMITED HOME / EXPLORE / RELATED QUERIES (No Full-Collection Listeners)
+    // CATALOG FETCH & RECONCILIATION (Equality-only queries; NO composite indexes needed)
     // =========================================================================
 
     /**
-     * Fetches a cursor-paginated page of published images (default 20 per page),
-     * ordered by `displayOrder` ascending then `createdAt` descending.
+     * Fetches all currently published images using a single equality filter (`status == "published"`)
+     * and sorts them on the client (`displayOrder ASC`, `createdAt DESC`) so no composite index is required.
      */
-    suspend fun fetchImagesPage(
-        pageSize: Long = 20L,
-        lastSnapshot: DocumentSnapshot? = null,
-        categoryIdOrName: String? = null
-    ): Result<PaginatedImagesResult> {
+    suspend fun fetchAllPublishedImages(source: Source = Source.DEFAULT): Result<List<InspirationImage>> {
         val path = "images"
         return try {
-            var query: Query = db.collection(path)
+            val snapshot = db.collection(path)
                 .whereEqualTo("status", "published")
-
-            if (!categoryIdOrName.isNullOrBlank() && !categoryIdOrName.equals("All", ignoreCase = true)) {
-                query = query.whereEqualTo("categoryName", categoryIdOrName)
-            }
-
-            query = query
-                .orderBy("displayOrder", Query.Direction.ASCENDING)
-                .orderBy("createdAt", Query.Direction.DESCENDING)
-                .limit(pageSize)
-
-            if (lastSnapshot != null) {
-                query = query.startAfter(lastSnapshot)
-            }
-
-            val snapshot = try {
-                query.get().await()
-            } catch (_: FirebaseFirestoreException) {
-                // Fallback if composite index is still building in user's Firebase project
-                var fallbackQuery: Query = db.collection(path)
-                    .whereEqualTo("status", "published")
-                    .limit(pageSize)
-                if (lastSnapshot != null) {
-                    fallbackQuery = fallbackQuery.startAfter(lastSnapshot)
-                }
-                fallbackQuery.get().await()
-            }
+                .get(source)
+                .await()
 
             val items = snapshot.toObjects(
                 InspirationImage::class.java,
                 DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+            ).sortedWith(
+                compareBy<InspirationImage> { it.displayOrder }
+                    .thenByDescending { it.createdAt?.seconds ?: 0L }
             )
-            val newCursor = snapshot.documents.lastOrNull()
-            Result.success(
-                PaginatedImagesResult(
-                    images = items,
-                    lastSnapshot = newCursor,
-                    hasMore = snapshot.documents.size.toLong() >= pageSize
-                )
-            )
+            Result.success(items)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -183,164 +117,22 @@ class LumiereRepository(
     }
 
     /**
-     * Fetches a small limited list of Featured images for the Home screen.
+     * Fetches all currently published categories using a single equality filter (`status == "published"`)
+     * and sorts them on the client by `sortOrder ASC` so no composite index is required.
      */
-    suspend fun fetchHomeFeaturedImages(limit: Long = 8L): Result<List<InspirationImage>> {
-        val path = "images"
+    suspend fun fetchAllPublishedCategories(source: Source = Source.DEFAULT): Result<List<CategoryItem>> {
+        val path = "categories"
         return try {
-            val snapshot = try {
-                db.collection(path)
-                    .whereEqualTo("status", "published")
-                    .whereEqualTo("featured", true)
-                    .orderBy("displayOrder", Query.Direction.ASCENDING)
-                    .orderBy("createdAt", Query.Direction.DESCENDING)
-                    .limit(limit)
-                    .get()
-                    .await()
-            } catch (_: FirebaseFirestoreException) {
-                db.collection(path)
-                    .whereEqualTo("status", "published")
-                    .whereEqualTo("featured", true)
-                    .limit(limit)
-                    .get()
-                    .await()
-            }
-            Result.success(
-                snapshot.toObjects(
-                    InspirationImage::class.java,
-                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                )
-            )
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.LIST, path)
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * Fetches a small limited list of Trending images for the Home screen.
-     */
-    suspend fun fetchHomeTrendingImages(limit: Long = 10L): Result<List<InspirationImage>> {
-        val path = "images"
-        return try {
-            val snapshot = try {
-                db.collection(path)
-                    .whereEqualTo("status", "published")
-                    .whereEqualTo("trending", true)
-                    .orderBy("viewCount", Query.Direction.DESCENDING)
-                    .limit(limit)
-                    .get()
-                    .await()
-            } catch (_: FirebaseFirestoreException) {
-                db.collection(path)
-                    .whereEqualTo("status", "published")
-                    .whereEqualTo("trending", true)
-                    .limit(limit)
-                    .get()
-                    .await()
-            }
-            Result.success(
-                snapshot.toObjects(
-                    InspirationImage::class.java,
-                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                )
-            )
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.LIST, path)
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * Fetches a small limited list of Recommended images for the Home screen.
-     */
-    suspend fun fetchHomeRecommendedImages(limit: Long = 10L): Result<List<InspirationImage>> {
-        val path = "images"
-        return try {
-            val snapshot = try {
-                db.collection(path)
-                    .whereEqualTo("status", "published")
-                    .whereEqualTo("recommended", true)
-                    .orderBy("displayOrder", Query.Direction.ASCENDING)
-                    .orderBy("createdAt", Query.Direction.DESCENDING)
-                    .limit(limit)
-                    .get()
-                    .await()
-            } catch (_: FirebaseFirestoreException) {
-                db.collection(path)
-                    .whereEqualTo("status", "published")
-                    .whereEqualTo("recommended", true)
-                    .limit(limit)
-                    .get()
-                    .await()
-            }
-            Result.success(
-                snapshot.toObjects(
-                    InspirationImage::class.java,
-                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                )
-            )
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.LIST, path)
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * Fetches related images in the same `categoryId` (excluding `excludeImageId`), with cursor pagination.
-     */
-    suspend fun fetchRelatedImagesPage(
-        categoryId: String,
-        excludeImageId: String,
-        pageSize: Long = 8L,
-        lastSnapshot: DocumentSnapshot? = null
-    ): Result<PaginatedImagesResult> {
-        val path = "images"
-        return try {
-            var query: Query = db.collection(path)
+            val snapshot = db.collection(path)
                 .whereEqualTo("status", "published")
-                .whereEqualTo("categoryId", categoryId)
-                .orderBy("displayOrder", Query.Direction.ASCENDING)
-                .orderBy("createdAt", Query.Direction.DESCENDING)
-                .limit(pageSize + 1L)
+                .get(source)
+                .await()
 
-            if (lastSnapshot != null) {
-                query = query.startAfter(lastSnapshot)
-            }
-
-            val snapshot = try {
-                query.get().await()
-            } catch (_: FirebaseFirestoreException) {
-                var fallbackQuery: Query = db.collection(path)
-                    .whereEqualTo("status", "published")
-                    .whereEqualTo("categoryId", categoryId)
-                    .limit(pageSize + 1L)
-                if (lastSnapshot != null) {
-                    fallbackQuery = fallbackQuery.startAfter(lastSnapshot)
-                }
-                fallbackQuery.get().await()
-            }
-
-            val allItems = snapshot.toObjects(
-                InspirationImage::class.java,
+            val items = snapshot.toObjects(
+                CategoryItem::class.java,
                 DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-            ).filter { it.id != excludeImageId }
-                .take(pageSize.toInt())
-
-            val newCursor = snapshot.documents.lastOrNull()
-            Result.success(
-                PaginatedImagesResult(
-                    images = allItems,
-                    lastSnapshot = newCursor,
-                    hasMore = snapshot.documents.size.toLong() >= pageSize
-                )
-            )
+            ).sortedBy { it.sortOrder }
+            Result.success(items)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -350,76 +142,121 @@ class LumiereRepository(
     }
 
     // =========================================================================
-    // PROMPT LOCK VAULT (`imagePrompts/{imageId}` & `promptUnlocks/{uid}_{imageId}`)
+    // PROMPT ACCESS (`promptUnlocks/{uid}_{imageId}` -> `imagePrompts/{imageId}`)
+    // Prompt text is NEVER cached to disk, DataStore, Room, or logged.
     // =========================================================================
 
     /**
-     * Reads the locked prompt from `imagePrompts/{imageId}`.
-     * Security rules allow this read ONLY if `promptUnlocks/{uid}_{imageId}` exists for the signed-in user
-     * (or if the user is an active admin/owner in `adminUsers/{uid}`).
+     * Ensures `promptUnlocks/{uid}_{imageId}` exists (gets first; creates only if missing with
+     * exact schema fields, `rewardVerified = true`, `adNetwork = "AdMob"` or `"none"`, never updates),
+     * then reads `imagePrompts/{imageId}` from the server and returns the prompt text in memory only.
      */
-    suspend fun fetchUnlockedPromptText(imageId: String): Result<String> {
-        val cleanId = imageId.trim()
-        val path = "imagePrompts/$cleanId"
-        return try {
-            ensureSignedInUserId()
-            require(isValidDocId(cleanId)) { "Invalid image ID." }
-            val snap = db.collection("imagePrompts").document(cleanId).get().await()
-            if (!snap.exists()) {
-                return Result.failure(IllegalStateException("Prompt text has not been published for this image yet."))
-            }
-            val doc = snap.toObject(
-                ImagePromptDocument::class.java,
-                DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-            )
-            val text = doc?.promptText?.trim().orEmpty()
-            if (text.isEmpty()) {
-                Result.failure(IllegalStateException("Prompt text is empty."))
-            } else {
-                Result.success(text)
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.GET, path)
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * Records a verified rewarded-ad unlock in `promptUnlocks/{uid}_{imageId}`, increments `unlockCount`
-     * by +1, and then reads the unlocked prompt text from `imagePrompts/{imageId}`.
-     */
-    suspend fun recordVerifiedPromptUnlock(
+    suspend fun ensureUnlockAndReadPrompt(
         image: InspirationImage,
-        adNetwork: String = "AdMob"
+        adNetwork: String
     ): Result<String> {
         val uid = try {
             ensureSignedInUserId()
         } catch (e: Exception) {
             return Result.failure(e)
         }
-        val unlockDocId = "${uid}_${image.id}"
-        val path = "promptUnlocks/$unlockDocId"
-        return try {
-            require(isValidDocId(image.id) && isValidDocId(unlockDocId)) { "Invalid unlock document ID" }
-            rewardUnlockVerifier.recordUnlockReceipt(db, uid, image, adNetwork)
+        val cleanImageId = image.id.trim()
+        val unlockDocId = "${uid}_$cleanImageId"
+        val unlockPath = "promptUnlocks/$unlockDocId"
+        val promptPath = "imagePrompts/$cleanImageId"
 
-            logAnalyticsEvent(
-                "prompt_unlocked_verified",
-                mapOf("image_id" to image.id, "category" to image.categoryName, "ad_network" to adNetwork)
+        return try {
+            require(isValidDocId(cleanImageId) && isValidDocId(unlockDocId)) { "Invalid ID" }
+
+            withTimeout(WRITE_TIMEOUT_MS) {
+                val unlockRef = db.collection("promptUnlocks").document(unlockDocId)
+                val existingUnlock = unlockRef.get(Source.SERVER).await()
+
+                if (!existingUnlock.exists()) {
+                    val safeTitle = image.title.trim().take(150).ifBlank { "Inspiration" }
+                    val safeNetwork = adNetwork.trim().take(50).ifBlank { "none" }
+                    val payload = mapOf(
+                        "userId" to uid,
+                        "imageId" to cleanImageId,
+                        "imageTitle" to safeTitle,
+                        "rewardVerified" to true,
+                        "adNetwork" to safeNetwork,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                    val batch = db.batch()
+                    batch.set(unlockRef, payload)
+                    batch.update(
+                        db.collection("images").document(cleanImageId),
+                        mapOf(
+                            "unlockCount" to FieldValue.increment(1L),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                    batch.commit().await()
+                }
+            }
+
+            val promptSnap = withTimeout(WRITE_TIMEOUT_MS) {
+                db.collection("imagePrompts").document(cleanImageId).get(Source.SERVER).await()
+            }
+            if (!promptSnap.exists()) {
+                return Result.failure(IllegalStateException("Prompt is not available right now"))
+            }
+            val doc = promptSnap.toObject(
+                ImagePromptDocument::class.java,
+                DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
             )
-            fetchUnlockedPromptText(image.id)
+            val text = doc?.promptText?.trim().orEmpty()
+            if (text.isEmpty()) {
+                Result.failure(IllegalStateException("Prompt is not available right now"))
+            } else {
+                Result.success(text)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.CREATE, path)
+            handleFirestoreError(e, OperationType.GET, "$unlockPath -> $promptPath")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Checks if `promptUnlocks/{uid}_{imageId}` already exists for this user and reads
+     * `imagePrompts/{imageId}` when `reusePreviousUnlocks == true`.
+     */
+    suspend fun readPreviouslyUnlockedPromptIfAvailable(imageId: String): Result<String?> {
+        val uid = try {
+            ensureSignedInUserId()
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val cleanImageId = imageId.trim()
+        val unlockDocId = "${uid}_$cleanImageId"
+        return try {
+            require(isValidDocId(cleanImageId) && isValidDocId(unlockDocId)) { "Invalid ID" }
+            val unlockSnap = withTimeout(WRITE_TIMEOUT_MS) {
+                db.collection("promptUnlocks").document(unlockDocId).get(Source.SERVER).await()
+            }
+            if (!unlockSnap.exists()) {
+                return Result.success(null)
+            }
+            val promptSnap = withTimeout(WRITE_TIMEOUT_MS) {
+                db.collection("imagePrompts").document(cleanImageId).get(Source.SERVER).await()
+            }
+            val text = promptSnap.toObject(
+                ImagePromptDocument::class.java,
+                DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+            )?.promptText?.trim()
+            Result.success(text?.takeIf { it.isNotEmpty() })
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
     // =========================================================================
-    // OBSERVABLE STREAMS (Categories, User State, Comments, Settings)
+    // OBSERVABLE STREAMS (Equality-only queries; client-side sorting)
     // =========================================================================
 
     fun observePublishedCategories(): Flow<List<CategoryItem>> = flow {
@@ -433,7 +270,7 @@ class LumiereRepository(
                     snapshot.toObjects(
                         CategoryItem::class.java,
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    )
+                    ).sortedBy { it.sortOrder }
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -489,7 +326,7 @@ class LumiereRepository(
                     snapshot.toObjects(
                         FavoriteRecord::class.java,
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    )
+                    ).sortedByDescending { it.createdAt?.seconds ?: 0L }
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -505,34 +342,10 @@ class LumiereRepository(
         )
     }
 
-    fun observeUserPromptUnlocks(userId: String): Flow<List<PromptUnlock>> = flow {
-        val uid = requireSignedInUserId()
-        check(uid == userId) { "User ID mismatch" }
-        val path = "promptUnlocks"
-        emitAll(
-            db.collection(path)
-                .whereEqualTo("userId", uid)
-                .snapshots()
-                .map { snapshot ->
-                    snapshot.toObjects(
-                        PromptUnlock::class.java,
-                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    )
-                }
-                .catch { error ->
-                    val firestoreError = generateSequence(error) { it.cause }
-                        .filterIsInstance<FirebaseFirestoreException>()
-                        .firstOrNull()
-                    if (firestoreError == null && error is CancellationException) throw error
-                    val exceptionToLog = firestoreError ?: (error as? Exception)
-                    if (exceptionToLog != null && auth.currentUser?.uid == uid) {
-                        handleFirestoreError(exceptionToLog, OperationType.LIST, path)
-                    }
-                    throw error
-                }
-        )
-    }
-
+    /**
+     * Observes visible comments for an image using equality-only filters (`imageId` and `status == "visible"`)
+     * and sorts newest-first on the client so NO composite index is required.
+     */
     fun observeImageComments(imageId: String): Flow<List<ImageComment>> = flow {
         val uid = auth.currentUser?.uid
         val path = "comments"
@@ -545,7 +358,7 @@ class LumiereRepository(
                     snapshot.toObjects(
                         ImageComment::class.java,
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    )
+                    ).sortedByDescending { it.createdAt?.seconds ?: 0L }
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -561,6 +374,10 @@ class LumiereRepository(
         )
     }
 
+    /**
+     * Observes published broadcast notifications using an equality-only filter (`status == "published"`)
+     * and sorts newest-first on the client so NO composite index is required.
+     */
     fun observeNotifications(): Flow<List<AppNotification>> = flow {
         val uid = auth.currentUser?.uid
         val path = "notifications"
@@ -572,7 +389,7 @@ class LumiereRepository(
                     snapshot.toObjects(
                         AppNotification::class.java,
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    )
+                    ).sortedByDescending { it.createdAt?.seconds ?: 0L }
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -588,18 +405,26 @@ class LumiereRepository(
         )
     }
 
-    fun observeUserProfile(userId: String): Flow<UserProfile?> = flow {
+    /**
+     * Observes comment replies for a signed-in real user:
+     * Queries `comments` with equality-only filters (`userId == uid` and `status == "visible"`),
+     * then filters `adminReply.isNotBlank()` and sorts newest-first on the client (NO composite index needed).
+     */
+    fun observeUserCommentReplies(userId: String): Flow<List<ImageComment>> = flow {
         val uid = requireSignedInUserId()
         check(uid == userId) { "User ID mismatch" }
-        val path = "users/$uid"
+        val path = "comments"
         emitAll(
-            db.collection("users").document(uid)
+            db.collection(path)
+                .whereEqualTo("userId", uid)
+                .whereEqualTo("status", "visible")
                 .snapshots()
                 .map { snapshot ->
-                    snapshot.toObject(
-                        UserProfile::class.java,
+                    snapshot.toObjects(
+                        ImageComment::class.java,
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    )
+                    ).filter { it.adminReply.isNotBlank() }
+                        .sortedByDescending { (it.updatedAt ?: it.createdAt)?.seconds ?: 0L }
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -608,7 +433,7 @@ class LumiereRepository(
                     if (firestoreError == null && error is CancellationException) throw error
                     val exceptionToLog = firestoreError ?: (error as? Exception)
                     if (exceptionToLog != null && auth.currentUser?.uid == uid) {
-                        handleFirestoreError(exceptionToLog, OperationType.GET, path)
+                        handleFirestoreError(exceptionToLog, OperationType.LIST, path)
                     }
                     throw error
                 }
@@ -641,6 +466,12 @@ class LumiereRepository(
         )
     }
 
+    /**
+     * Observes `advertisementSettings/global`:
+     * - If the document does NOT exist in Firestore, returns [AdvertisementSettings.defaultWhenDocumentMissing]
+     *   (which uses the built-in BuildConfig ad unit IDs).
+     * - If the document DOES exist in Firestore, uses its exact values (so any blank unit ID turns that ad format off).
+     */
     fun observeAdvertisementSettings(): Flow<AdvertisementSettings> = flow {
         val uid = auth.currentUser?.uid
         val path = "advertisementSettings/global"
@@ -648,10 +479,14 @@ class LumiereRepository(
             db.collection("advertisementSettings").document("global")
                 .snapshots()
                 .map { snapshot ->
-                    snapshot.toObject(
-                        AdvertisementSettings::class.java,
-                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    ) ?: AdvertisementSettings()
+                    if (!snapshot.exists()) {
+                        AdvertisementSettings.defaultWhenDocumentMissing()
+                    } else {
+                        snapshot.toObject(
+                            AdvertisementSettings::class.java,
+                            DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                        ) ?: AdvertisementSettings.defaultWhenDocumentMissing()
+                    }
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -667,7 +502,6 @@ class LumiereRepository(
         )
     }
 
-    // Fetch single image by ID (for deep linking & notification tap verification)
     suspend fun fetchImageById(imageId: String): Result<InspirationImage?> {
         val cleanId = imageId.trim()
         val path = "images/$cleanId"
@@ -678,7 +512,7 @@ class LumiereRepository(
                 snapshot.toObject(
                     InspirationImage::class.java,
                     DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                )
+                )?.takeIf { it.status == "published" }
             } else null
             Result.success(image)
         } catch (e: CancellationException) {
@@ -689,40 +523,41 @@ class LumiereRepository(
         }
     }
 
-    // Ensure User Profile Document Exists on Sign-In
     suspend fun ensureUserProfile(user: FirebaseUser): Result<Unit> {
         val uid = user.uid
         val path = "users/$uid"
         return try {
             require(isValidDocId(uid)) { "Invalid user ID" }
-            val docRef = db.collection("users").document(uid)
-            val existing = docRef.get().await()
-            val displayName = (user.displayName ?: "PromptLens Creator").trim().take(80).ifBlank { "PromptLens Creator" }
-            val email = (user.email ?: "").trim().take(150)
-            val photoUrl = (user.photoUrl?.toString() ?: "").trim().take(1000)
+            withTimeout(WRITE_TIMEOUT_MS) {
+                val docRef = db.collection("users").document(uid)
+                val existing = docRef.get(Source.SERVER).await()
+                val displayName = (user.displayName ?: "PromptLens Creator").trim().take(80).ifBlank { "PromptLens Creator" }
+                val email = (user.email ?: "").trim().take(150)
+                val photoUrl = (user.photoUrl?.toString() ?: "").trim().take(1000)
 
-            if (!existing.exists()) {
-                val payload = mapOf(
-                    "userId" to uid,
-                    "displayName" to displayName,
-                    "email" to email,
-                    "photoUrl" to photoUrl,
-                    "likedCount" to 0L,
-                    "favoriteCount" to 0L,
-                    "unlockedCount" to 0L,
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                docRef.set(payload).await()
-            } else {
-                docRef.update(
-                    mapOf(
+                if (!existing.exists()) {
+                    val payload = mapOf(
+                        "userId" to uid,
                         "displayName" to displayName,
                         "email" to email,
                         "photoUrl" to photoUrl,
+                        "likedCount" to 0L,
+                        "favoriteCount" to 0L,
+                        "unlockedCount" to 0L,
+                        "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
-                ).await()
+                    docRef.set(payload).await()
+                } else {
+                    docRef.update(
+                        mapOf(
+                            "displayName" to displayName,
+                            "email" to email,
+                            "photoUrl" to photoUrl,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    ).await()
+                }
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
@@ -734,25 +569,22 @@ class LumiereRepository(
     }
 
     // =========================================================================
-    // SAFE COUNTERS (+1 / -1 Atomic Increments & Batched Writes)
-    // NOTE: Fully trustworthy server-only counters require Cloud Functions (Firebase Blaze plan).
+    // ONLINE-ONLY SERVER-ACKNOWLEDGED WRITES (~15s timeout, no offline queueing)
     // =========================================================================
 
-    /**
-     * Increments `viewCount` by +1 (called at most once per image per app session).
-     */
     suspend fun recordImageView(imageId: String): Result<Unit> {
         val path = "images/$imageId"
         return try {
             ensureSignedInUserId()
             require(isValidDocId(imageId)) { "Invalid image ID" }
-            db.collection("images").document(imageId).update(
-                mapOf(
-                    "viewCount" to FieldValue.increment(1L),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
-            logAnalyticsEvent("image_view", mapOf("image_id" to imageId))
+            withTimeout(WRITE_TIMEOUT_MS) {
+                db.collection("images").document(imageId).update(
+                    mapOf(
+                        "viewCount" to FieldValue.increment(1L),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -762,11 +594,6 @@ class LumiereRepository(
         }
     }
 
-    /**
-     * Toggles a Like using a batched write (`db.batch()`) combining `likes/{uid}_{imageId}` create/delete
-     * with `FieldValue.increment(1L)` / `FieldValue.increment(-1L)` on `images/{imageId}`.
-     * Requires a real (non-anonymous) account.
-     */
     suspend fun toggleLike(image: InspirationImage, currentlyLiked: Boolean): Result<Boolean> {
         val user = try {
             requireRealUser()
@@ -778,39 +605,39 @@ class LumiereRepository(
         val path = "likes/$likeDocId"
         return try {
             require(isValidDocId(image.id) && isValidDocId(likeDocId)) { "Invalid like ID" }
-            val likeRef = db.collection("likes").document(likeDocId)
-            val imageRef = db.collection("images").document(image.id)
-            val batch = db.batch()
+            withTimeout(WRITE_TIMEOUT_MS) {
+                val likeRef = db.collection("likes").document(likeDocId)
+                val imageRef = db.collection("images").document(image.id)
+                val batch = db.batch()
 
-            if (currentlyLiked) {
-                batch.delete(likeRef)
-                batch.update(
-                    imageRef,
-                    mapOf(
-                        "likeCount" to FieldValue.increment(-1L),
-                        "updatedAt" to FieldValue.serverTimestamp()
+                if (currentlyLiked) {
+                    batch.delete(likeRef)
+                    batch.update(
+                        imageRef,
+                        mapOf(
+                            "likeCount" to FieldValue.increment(-1L),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
                     )
-                )
-                batch.commit().await()
-                logAnalyticsEvent("image_unliked", mapOf("image_id" to image.id))
-                Result.success(false)
-            } else {
-                val payload = mapOf(
-                    "userId" to uid,
-                    "imageId" to image.id,
-                    "createdAt" to FieldValue.serverTimestamp()
-                )
-                batch.set(likeRef, payload)
-                batch.update(
-                    imageRef,
-                    mapOf(
-                        "likeCount" to FieldValue.increment(1L),
-                        "updatedAt" to FieldValue.serverTimestamp()
+                    batch.commit().await()
+                    Result.success(false)
+                } else {
+                    val payload = mapOf(
+                        "userId" to uid,
+                        "imageId" to image.id,
+                        "createdAt" to FieldValue.serverTimestamp()
                     )
-                )
-                batch.commit().await()
-                logAnalyticsEvent("image_liked", mapOf("image_id" to image.id, "category" to image.categoryName))
-                Result.success(true)
+                    batch.set(likeRef, payload)
+                    batch.update(
+                        imageRef,
+                        mapOf(
+                            "likeCount" to FieldValue.increment(1L),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                    batch.commit().await()
+                    Result.success(true)
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -820,7 +647,6 @@ class LumiereRepository(
         }
     }
 
-    // Toggle Favorite with Deterministic ID `${userId}_${imageId}` (works for anonymous guests and Google users)
     suspend fun toggleFavorite(image: InspirationImage, currentlyFavorited: Boolean): Result<Boolean> {
         val uid = try {
             ensureSignedInUserId()
@@ -831,24 +657,24 @@ class LumiereRepository(
         val path = "favorites/$favDocId"
         return try {
             require(isValidDocId(image.id) && isValidDocId(favDocId)) { "Invalid favorite ID" }
-            val favRef = db.collection("favorites").document(favDocId)
-            if (currentlyFavorited) {
-                favRef.delete().await()
-                logAnalyticsEvent("image_unfavorited", mapOf("image_id" to image.id))
-                Result.success(false)
-            } else {
-                val payload = mapOf(
-                    "userId" to uid,
-                    "imageId" to image.id,
-                    "imageTitle" to image.title.trim().take(150).ifBlank { "Untitled Inspiration" },
-                    "imageUrl" to image.imageUrl.trim().take(1000),
-                    "categoryName" to image.categoryName.trim().take(100).ifBlank { "Photography" },
-                    "aspectRatio" to image.aspectRatio.coerceIn(0.2, 5.0),
-                    "createdAt" to FieldValue.serverTimestamp()
-                )
-                favRef.set(payload).await()
-                logAnalyticsEvent("image_favorited", mapOf("image_id" to image.id, "category" to image.categoryName))
-                Result.success(true)
+            withTimeout(WRITE_TIMEOUT_MS) {
+                val favRef = db.collection("favorites").document(favDocId)
+                if (currentlyFavorited) {
+                    favRef.delete().await()
+                    Result.success(false)
+                } else {
+                    val payload = mapOf(
+                        "userId" to uid,
+                        "imageId" to image.id,
+                        "imageTitle" to image.title.trim().take(150).ifBlank { "Inspiration" },
+                        "imageUrl" to image.imageUrl.trim().take(1000),
+                        "categoryName" to image.categoryName.trim().take(100).ifBlank { "Photography" },
+                        "aspectRatio" to image.aspectRatio.coerceIn(0.2, 5.0),
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                    favRef.set(payload).await()
+                    Result.success(true)
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -858,19 +684,19 @@ class LumiereRepository(
         }
     }
 
-    // Record Share Event (+1 safe counter step)
-    suspend fun recordPromptShare(imageId: String, categoryName: String): Result<Unit> {
+    suspend fun recordPromptShare(imageId: String): Result<Unit> {
         val path = "images/$imageId"
         return try {
             ensureSignedInUserId()
             require(isValidDocId(imageId)) { "Invalid image ID" }
-            db.collection("images").document(imageId).update(
-                mapOf(
-                    "shareCount" to FieldValue.increment(1L),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
-            logAnalyticsEvent("prompt_shared", mapOf("image_id" to imageId, "category" to categoryName))
+            withTimeout(WRITE_TIMEOUT_MS) {
+                db.collection("images").document(imageId).update(
+                    mapOf(
+                        "shareCount" to FieldValue.increment(1L),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -880,7 +706,6 @@ class LumiereRepository(
         }
     }
 
-    // Post Comment on an Image (requires real non-anonymous account; batched +1 commentCount)
     suspend fun postComment(imageId: String, rawText: String): Result<Unit> {
         val user = try {
             requireRealUser()
@@ -889,38 +714,39 @@ class LumiereRepository(
         }
         val uid = user.uid
         val trimmedText = rawText.trim()
-        require(trimmedText.isNotEmpty()) { "Comment cannot be empty." }
-        require(trimmedText.length <= 500) { "Comment must be 500 characters or fewer." }
-        require(isValidDocId(imageId)) { "Invalid image ID." }
+        if (trimmedText.isEmpty() || trimmedText.length > 500 || !isValidDocId(imageId)) {
+            return Result.failure(IllegalArgumentException("Invalid comment."))
+        }
 
         val commentRef = db.collection("comments").document()
         val imageRef = db.collection("images").document(imageId)
         val path = commentRef.path
         return try {
-            val userName = (user.displayName ?: "PromptLens Member").trim().take(80).ifBlank { "PromptLens Member" }
-            val payload = mapOf(
-                "imageId" to imageId,
-                "userId" to uid,
-                "userName" to userName,
-                "text" to trimmedText,
-                "reported" to false,
-                "reportReason" to "",
-                "adminReply" to "",
-                "status" to "visible",
-                "createdAt" to FieldValue.serverTimestamp(),
-                "updatedAt" to FieldValue.serverTimestamp()
-            )
-            val batch = db.batch()
-            batch.set(commentRef, payload)
-            batch.update(
-                imageRef,
-                mapOf(
-                    "commentCount" to FieldValue.increment(1L),
+            withTimeout(WRITE_TIMEOUT_MS) {
+                val userName = (user.displayName ?: "PromptLens Member").trim().take(80).ifBlank { "PromptLens Member" }
+                val payload = mapOf(
+                    "imageId" to imageId,
+                    "userId" to uid,
+                    "userName" to userName,
+                    "text" to trimmedText,
+                    "reported" to false,
+                    "reportReason" to "",
+                    "adminReply" to "",
+                    "status" to "visible",
+                    "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
-            )
-            batch.commit().await()
-            logAnalyticsEvent("comment_posted", mapOf("image_id" to imageId))
+                val batch = db.batch()
+                batch.set(commentRef, payload)
+                batch.update(
+                    imageRef,
+                    mapOf(
+                        "commentCount" to FieldValue.increment(1L),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                batch.commit().await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -930,22 +756,23 @@ class LumiereRepository(
         }
     }
 
-    // Delete Own Comment (batched -1 commentCount)
     suspend fun deleteComment(commentId: String, imageId: String): Result<Unit> {
         val path = "comments/$commentId"
         return try {
             requireRealUser()
-            require(isValidDocId(commentId) && isValidDocId(imageId)) { "Invalid comment or image ID." }
-            val batch = db.batch()
-            batch.delete(db.collection("comments").document(commentId))
-            batch.update(
-                db.collection("images").document(imageId),
-                mapOf(
-                    "commentCount" to FieldValue.increment(-1L),
-                    "updatedAt" to FieldValue.serverTimestamp()
+            require(isValidDocId(commentId) && isValidDocId(imageId)) { "Invalid ID" }
+            withTimeout(WRITE_TIMEOUT_MS) {
+                val batch = db.batch()
+                batch.delete(db.collection("comments").document(commentId))
+                batch.update(
+                    db.collection("images").document(imageId),
+                    mapOf(
+                        "commentCount" to FieldValue.increment(-1L),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
                 )
-            )
-            batch.commit().await()
+                batch.commit().await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -955,11 +782,6 @@ class LumiereRepository(
         }
     }
 
-    /**
-     * Reports an inappropriate comment by creating a document in `reports/{reportId}`
-     * (`{ commentId, imageId, reporterId, reason, status: "open", createdAt }`)
-     * and flagging the comment document in a single batched write.
-     */
     suspend fun reportComment(commentId: String, imageId: String, reason: String): Result<Unit> {
         val user = try {
             requireRealUser()
@@ -969,28 +791,29 @@ class LumiereRepository(
         val reportRef = db.collection("reports").document()
         val path = reportRef.path
         return try {
-            require(isValidDocId(commentId) && isValidDocId(imageId)) { "Invalid comment or image ID." }
-            val cleanReason = reason.trim().take(300).ifBlank { "Inappropriate content" }
-            val reportPayload = mapOf(
-                "commentId" to commentId,
-                "imageId" to imageId,
-                "reporterId" to user.uid,
-                "reason" to cleanReason,
-                "status" to "open",
-                "createdAt" to FieldValue.serverTimestamp()
-            )
-            val batch = db.batch()
-            batch.set(reportRef, reportPayload)
-            batch.update(
-                db.collection("comments").document(commentId),
-                mapOf(
-                    "reported" to true,
-                    "reportReason" to cleanReason.take(200),
-                    "updatedAt" to FieldValue.serverTimestamp()
+            require(isValidDocId(commentId) && isValidDocId(imageId)) { "Invalid ID" }
+            val cleanReason = reason.trim().take(300).ifBlank { "Inappropriate comment" }
+            withTimeout(WRITE_TIMEOUT_MS) {
+                val reportPayload = mapOf(
+                    "commentId" to commentId,
+                    "imageId" to imageId,
+                    "reporterId" to user.uid,
+                    "reason" to cleanReason,
+                    "status" to "open",
+                    "createdAt" to FieldValue.serverTimestamp()
                 )
-            )
-            batch.commit().await()
-            logAnalyticsEvent("comment_reported", mapOf("comment_id" to commentId, "image_id" to imageId))
+                val batch = db.batch()
+                batch.set(reportRef, reportPayload)
+                batch.update(
+                    db.collection("comments").document(commentId),
+                    mapOf(
+                        "reported" to true,
+                        "reportReason" to cleanReason.take(200),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                batch.commit().await()
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -1000,47 +823,89 @@ class LumiereRepository(
         }
     }
 
-    // Delete User Account Data from Firestore
-    suspend fun deleteUserAccountData(userId: String): Result<Unit> {
-        val path = "users/$userId"
+    /**
+     * Deletes the user's own documents allowed by security rules (`favorites`, `likes`, `comments`
+     * authored by them, and `users/{uid}`), then deletes the Firebase Auth user.
+     * If Firebase Auth throws [FirebaseAuthRecentLoginRequiredException], returns a failure wrapping
+     * [ReauthRequiredForDeleteException] so the UI can ask the user to sign in with Google again and retry.
+     */
+    suspend fun deleteUserAccountAndData(): Result<Unit> {
+        val currentUser = auth.currentUser
+            ?: return Result.failure(IllegalStateException("Not signed in"))
+        val uid = currentUser.uid
+        val isReal = GoogleSignInManager.isRealAuthenticatedUser(currentUser)
+
         return try {
-            val uid = requireSignedInUserId()
-            check(uid == userId) { "Unauthorized account deletion request." }
-            db.collection("users").document(uid).delete().await()
+            withTimeout(WRITE_TIMEOUT_MS) {
+                // 1. Delete user's favorites
+                val favSnap = db.collection("favorites")
+                    .whereEqualTo("userId", uid)
+                    .get(Source.SERVER)
+                    .await()
+                favSnap.documents.forEach { doc ->
+                    runCatching { doc.reference.delete().await() }
+                }
+
+                // 2. Delete user's likes & authored visible comments (allowed for real users)
+                if (isReal) {
+                    val likesSnap = db.collection("likes")
+                        .whereEqualTo("userId", uid)
+                        .get(Source.SERVER)
+                        .await()
+                    likesSnap.documents.forEach { doc ->
+                        runCatching { doc.reference.delete().await() }
+                    }
+
+                    val commentsSnap = db.collection("comments")
+                        .whereEqualTo("userId", uid)
+                        .whereEqualTo("status", "visible")
+                        .get(Source.SERVER)
+                        .await()
+                    commentsSnap.documents.forEach { doc ->
+                        runCatching { doc.reference.delete().await() }
+                    }
+                }
+
+                // 3. Delete users/{uid} profile doc
+                runCatching {
+                    db.collection("users").document(uid).delete().await()
+                }
+
+                // 4. Delete Firebase Auth account
+                currentUser.delete().await()
+            }
+
+            // Re-establish clean anonymous guest session after account deletion
+            runCatching { auth.signInAnonymously().await() }
             Result.success(Unit)
+        } catch (e: FirebaseAuthRecentLoginRequiredException) {
+            Result.failure(ReauthRequiredForDeleteException())
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.DELETE, path)
+            handleFirestoreError(e, OperationType.DELETE, "users/$uid")
             Result.failure(e)
         }
     }
 
     companion object {
-        private val DefaultClientRewardUnlockVerifier = RewardUnlockVerifier { db, uid, image, adNetwork ->
-            val unlockDocId = "${uid}_${image.id}"
-            val unlockRef = db.collection("promptUnlocks").document(unlockDocId)
-            val existing = unlockRef.get().await()
-            if (!existing.exists()) {
-                val batch = db.batch()
-                val payload = mapOf(
-                    "userId" to uid,
-                    "imageId" to image.id,
-                    "imageTitle" to image.title.trim().take(150).ifBlank { "Inspiration" },
-                    "rewardVerified" to true,
-                    "adNetwork" to adNetwork.trim().take(50).ifBlank { "AdMob" },
-                    "createdAt" to FieldValue.serverTimestamp()
-                )
-                batch.set(unlockRef, payload)
-                batch.update(
-                    db.collection("images").document(image.id),
-                    mapOf(
-                        "unlockCount" to FieldValue.increment(1L),
-                        "updatedAt" to FieldValue.serverTimestamp()
+        private const val WRITE_TIMEOUT_MS = 15_000L
+        private const val FIRESTORE_CACHE_SIZE_BYTES = 100L * 1024L * 1024L // 100 MB cap
+
+        private fun createConfiguredFirestore(context: Context): FirebaseFirestore {
+            val dbId = context.applicationContext.getString(R.string.firestore_database_id)
+            val firestore = FirebaseFirestore.getInstance(dbId)
+            runCatching {
+                val settings = FirebaseFirestoreSettings.Builder(firestore.firestoreSettings)
+                    .setLocalCacheSettings(
+                        PersistentCacheSettings.newBuilder()
+                            .setSizeBytes(FIRESTORE_CACHE_SIZE_BYTES)
+                            .build()
                     )
-                )
-                batch.commit().await()
+                    .build()
+                firestore.firestoreSettings = settings
             }
+            return firestore
         }
     }
 }
