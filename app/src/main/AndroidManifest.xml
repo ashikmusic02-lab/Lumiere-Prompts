@@ -49,6 +49,9 @@
         <meta-data
             android:name="google_analytics_adid_collection_enabled"
             android:value="false" />
+        <meta-data
+            android:name="android.webkit.WebView.MetricsOptOut"
+            android:value="true" />
 
         <!-- OneSignal Default Small Notification Icon & Accent Color -->
         <meta-data

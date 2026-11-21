@@ -43,3 +43,4 @@ val SoftChampagneGold = PromptGoldSoft
 val LuminousViolet = PromptVioletPrimary
 val EmeraldSuccess = Color(0xFF10B981)
 val CrimsonError = Color(0xFFF43F5E)
+val HeartLikeRed = Color(0xFFFF3B5C)

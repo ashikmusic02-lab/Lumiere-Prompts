@@ -37,6 +37,7 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
 
 class ReauthRequiredForDeleteException : Exception("Re-authentication required")
+class PromptComingSoonException : Exception("Prompt coming soon")
 
 class LumiereRepository(
     private val db: FirebaseFirestore,
@@ -90,7 +91,7 @@ class LumiereRepository(
 
     /**
      * Fetches all currently published images using a single equality filter (`status == "published"`)
-     * and sorts them on the client (`displayOrder ASC`, `createdAt DESC`) so no composite index is required.
+     * and sorts them newest first (`createdAt DESC`) on the client so no composite index is required.
      */
     suspend fun fetchAllPublishedImages(source: Source = Source.DEFAULT): Result<List<InspirationImage>> {
         val path = "images"
@@ -104,8 +105,8 @@ class LumiereRepository(
                 InspirationImage::class.java,
                 DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
             ).sortedWith(
-                compareBy<InspirationImage> { it.displayOrder }
-                    .thenByDescending { it.createdAt?.seconds ?: 0L }
+                compareByDescending<InspirationImage> { it.createdAt?.seconds ?: 0L }
+                    .thenBy { it.displayOrder }
             )
             Result.success(items)
         } catch (e: CancellationException) {
@@ -155,12 +156,15 @@ class LumiereRepository(
         image: InspirationImage,
         adNetwork: String
     ): Result<String> {
+        val cleanImageId = image.id.trim()
         val uid = try {
             ensureSignedInUserId()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            android.util.Log.e("LumiereRepository", "ensureSignedInUserId failed for imageId=$cleanImageId", e)
             return Result.failure(e)
         }
-        val cleanImageId = image.id.trim()
         val unlockDocId = "${uid}_$cleanImageId"
         val unlockPath = "promptUnlocks/$unlockDocId"
         val promptPath = "imagePrompts/$cleanImageId"
@@ -183,16 +187,7 @@ class LumiereRepository(
                         "adNetwork" to safeNetwork,
                         "createdAt" to FieldValue.serverTimestamp()
                     )
-                    val batch = db.batch()
-                    batch.set(unlockRef, payload)
-                    batch.update(
-                        db.collection("images").document(cleanImageId),
-                        mapOf(
-                            "unlockCount" to FieldValue.increment(1L),
-                            "updatedAt" to FieldValue.serverTimestamp()
-                        )
-                    )
-                    batch.commit().await()
+                    unlockRef.set(payload).await()
                 }
             }
 
@@ -200,7 +195,7 @@ class LumiereRepository(
                 db.collection("imagePrompts").document(cleanImageId).get(Source.SERVER).await()
             }
             if (!promptSnap.exists()) {
-                return Result.failure(IllegalStateException("Prompt is not available right now"))
+                return Result.failure(PromptComingSoonException())
             }
             val doc = promptSnap.toObject(
                 ImagePromptDocument::class.java,
@@ -208,13 +203,14 @@ class LumiereRepository(
             )
             val text = doc?.promptText?.trim().orEmpty()
             if (text.isEmpty()) {
-                Result.failure(IllegalStateException("Prompt is not available right now"))
+                Result.failure(PromptComingSoonException())
             } else {
                 Result.success(text)
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            android.util.Log.e("LumiereRepository", "ensureUnlockAndReadPrompt failed for $unlockPath -> $promptPath", e)
             handleFirestoreError(e, OperationType.GET, "$unlockPath -> $promptPath")
             Result.failure(e)
         }

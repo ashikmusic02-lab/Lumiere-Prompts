@@ -8,8 +8,8 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.NoCredentialException
 import com.example.R
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
@@ -23,6 +23,7 @@ import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -30,9 +31,11 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 object GoogleSignInManager {
     private const val TAG = "Auth"
+    private const val ANONYMOUS_AUTH_TIMEOUT_MS = 6_000L
 
     fun isFirebaseConfigured(context: Context): Boolean {
         return runCatching {
@@ -61,17 +64,20 @@ object GoogleSignInManager {
     }
 
     /**
-     * Ensures that a Firebase Auth session (anonymous guest or existing user) is active before
-     * any Firestore work runs. If `Firebase.auth.currentUser` is null, calls `signInAnonymously()`.
+     * Silently restores an existing Firebase Auth session (Google or anonymous) or establishes
+     * an anonymous guest session in the background with a timeout so it never blocks the UI.
+     * NEVER triggers any Credential Manager / Google One Tap / account chooser popup.
      */
-    suspend fun ensureAnonymousSignInIfNeeded(context: Context): FirebaseUser? {
-        if (!isFirebaseConfigured(context)) return null
-        val existing = Firebase.auth.currentUser
-        if (existing != null) return existing
-        return try {
-            Firebase.auth.signInAnonymously().await().user
+    suspend fun ensureAnonymousSignInIfNeeded(context: Context): FirebaseUser? = withContext(Dispatchers.IO) {
+        if (!isFirebaseConfigured(context)) return@withContext null
+        val existing = runCatching { Firebase.auth.currentUser }.getOrNull()
+        if (existing != null) return@withContext existing
+        return@withContext try {
+            withTimeoutOrNull(ANONYMOUS_AUTH_TIMEOUT_MS) {
+                Firebase.auth.signInAnonymously().await().user
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "Anonymous sign-in failed (ensure Anonymous provider is enabled in Firebase Console): ${e.message}")
+            Log.w(TAG, "Anonymous sign-in skipped: ${e.message}")
             null
         }
     }
@@ -112,60 +118,11 @@ object GoogleSignInManager {
         awaitClose { auth.removeAuthStateListener(listener) }
     }
 
-    // 1. Automatic Anonymous Sign-In + Silent Google Auto-Sign-In on Startup
-    fun attemptAutoSignIn(
-        context: Context,
-        credentialManager: CredentialManager,
-        onAuthSuccess: () -> Unit,
-        onUnauthenticated: () -> Unit,
-        scope: CoroutineScope
-    ) {
-        if (!isFirebaseConfigured(context)) {
-            onUnauthenticated()
-            return
-        }
-        scope.launch {
-            // Ensure an anonymous session exists immediately if currentUser is null
-            ensureAnonymousSignInIfNeeded(context)
-
-            if (isRealAuthenticatedUser(Firebase.auth.currentUser)) {
-                onAuthSuccess()
-                return@launch
-            }
-            if (!isWebClientIdConfigured(context)) {
-                onUnauthenticated()
-                return@launch
-            }
-            val clientId = try {
-                context.getString(R.string.default_web_client_id)
-            } catch (_: Exception) {
-                onUnauthenticated()
-                return@launch
-            }
-            val googleIdOption = GetGoogleIdOption.Builder()
-                .setFilterByAuthorizedAccounts(true)
-                .setServerClientId(clientId)
-                .setAutoSelectEnabled(true)
-                .build()
-            val request = GetCredentialRequest.Builder()
-                .addCredentialOption(googleIdOption)
-                .build()
-            try {
-                val cred = credentialManager.getCredential(context, request).credential
-                if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                    val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
-                    signInOrLinkCredential(GoogleAuthProvider.getCredential(token, null))
-                    onAuthSuccess()
-                } else {
-                    onUnauthenticated()
-                }
-            } catch (_: Exception) {
-                onUnauthenticated()
-            }
-        }
-    }
-
-    // 2. Interactive Google Sign-In (Exactly ONE option: GetSignInWithGoogleOption)
+    /**
+     * Interactive Google Sign-In invoked ONLY when the user explicitly taps Like, Comment,
+     * or the Sign in button in Profile.
+     * If the user cancels or dismisses the sheet, returns silently with no error message.
+     */
     fun onGoogleSignInClicked(
         context: Context,
         credentialManager: CredentialManager,
@@ -175,15 +132,13 @@ object GoogleSignInManager {
         onAuthCancelled: () -> Unit = {}
     ) {
         if (!isFirebaseConfigured(context) || !isWebClientIdConfigured(context)) {
-            onAuthError(
-                "Google Sign-In awaits your google-services.json file in app/. You can continue browsing as a guest meanwhile."
-            )
+            onAuthCancelled()
             return
         }
         val clientId = try {
             context.getString(R.string.default_web_client_id)
         } catch (_: Exception) {
-            onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
+            onAuthCancelled()
             return
         }
         val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
@@ -200,19 +155,27 @@ object GoogleSignInManager {
                     signInOrLinkCredential(GoogleAuthProvider.getCredential(token, null))
                     onAuthSuccess()
                 } else {
-                    onAuthError("Unexpected credential type returned from Google Sign-In")
+                    onAuthCancelled()
                 }
-            } catch (e: GetCredentialCancellationException) {
-                Log.w(TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
+            } catch (_: GetCredentialCancellationException) {
+                // User cancelled the sign-in sheet: return silently without any error message
+                onAuthCancelled()
+            } catch (_: NoCredentialException) {
                 onAuthCancelled()
             } catch (e: Exception) {
-                Log.e(TAG, "Google Sign-In failed", e)
-                onAuthError(e.localizedMessage ?: "Sign in failed")
+                // If user dismissed or cancelled via any message containing cancel, ignore silently
+                val msg = e.message.orEmpty().lowercase()
+                if (msg.contains("cancel") || msg.contains("dismiss") || msg.contains("user")) {
+                    onAuthCancelled()
+                } else {
+                    Log.e(TAG, "Google Sign-In failed", e)
+                    onAuthError(e.localizedMessage ?: "Sign in failed")
+                }
             }
         }
     }
 
-    // 3. Safe Sign-Out Flow inside NonCancellable (re-establishes anonymous guest session after sign-out)
+    // Safe Sign-Out Flow inside NonCancellable (re-establishes anonymous guest session after sign-out)
     fun signOut(
         context: Context,
         credentialManager: CredentialManager,
@@ -228,7 +191,11 @@ object GoogleSignInManager {
                 } finally {
                     if (isFirebaseConfigured(context)) {
                         runCatching { Firebase.auth.signOut() }
-                        runCatching { Firebase.auth.signInAnonymously().await() }
+                        runCatching {
+                            withTimeoutOrNull(ANONYMOUS_AUTH_TIMEOUT_MS) {
+                                Firebase.auth.signInAnonymously().await()
+                            }
+                        }
                     }
                     onSignOutComplete()
                 }

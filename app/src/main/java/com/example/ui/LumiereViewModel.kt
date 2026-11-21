@@ -12,6 +12,7 @@ import com.example.auth.GoogleSignInManager
 import com.example.data.LocalPreferencesRepository
 import com.example.data.LumiereRepository
 import com.example.data.NetworkAndCacheManager
+import com.example.data.PromptComingSoonException
 import com.example.data.ReauthRequiredForDeleteException
 import com.example.model.AdvertisementSettings
 import com.example.model.AppConfigSettings
@@ -27,8 +28,8 @@ import com.example.model.UiState
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
-import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Source
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -45,6 +46,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class LumiereViewModel(
@@ -56,6 +59,7 @@ class LumiereViewModel(
 
     companion object {
         private const val SIX_HOURS_MS = 6L * 60L * 60L * 1000L
+        private const val SYNC_TIMEOUT_MS = 12_000L
 
         fun factory(initialUserId: String?): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -76,6 +80,9 @@ class LumiereViewModel(
             }
         }
     }
+
+    private val _isInitialCacheLoaded = MutableStateFlow(false)
+    val isInitialCacheLoaded: StateFlow<Boolean> = _isInitialCacheLoaded.asStateFlow()
 
     private val _currentUserId = MutableStateFlow(initialUserId)
     val currentUserIdFlow: StateFlow<String?> = _currentUserId.asStateFlow()
@@ -106,7 +113,7 @@ class LumiereViewModel(
     }
 
     // =========================================================================
-    // CATALOG STATE (Images & Categories with Offline Cache + Reconciliation)
+    // CATALOG STATE (Images & Categories with Instant Local Cache First)
     // =========================================================================
 
     private val _imagesUiState = MutableStateFlow<UiState<List<InspirationImage>>>(UiState.Loading)
@@ -128,12 +135,12 @@ class LumiereViewModel(
     private val _activeDetailPromptText = MutableStateFlow<String?>(null)
     val activeDetailPromptText: StateFlow<String?> = _activeDetailPromptText.asStateFlow()
 
-    private val _isLoadingDetailPrompt = MutableStateFlow(false)
-    val isLoadingDetailPrompt: StateFlow<Boolean> = _isLoadingDetailPrompt.asStateFlow()
+    private val _isPromptComingSoon = MutableStateFlow(false)
+    val isPromptComingSoon: StateFlow<Boolean> = _isPromptComingSoon.asStateFlow()
 
     fun clearActiveDetailPrompt() {
         _activeDetailPromptText.value = null
-        _isLoadingDetailPrompt.value = false
+        _isPromptComingSoon.value = false
     }
 
     // =========================================================================
@@ -328,25 +335,45 @@ class LumiereViewModel(
             runCatching { Firebase.auth.addAuthStateListener(authStateListener) }
         }
 
-        // 1. Load cached catalog immediately for instant startup & offline viewing
-        viewModelScope.launch {
-            val cachedImgs = localPrefs.loadCachedImages()
-            val cachedCats = localPrefs.loadCachedCategories()
-            if (cachedCats.isNotEmpty()) {
-                _categoriesState.value = cachedCats
+        // 1. Read local cache FIRST and show immediately; dismiss splash as soon as cache is read.
+        viewModelScope.launch(Dispatchers.IO) {
+            var cachedImgs = localPrefs.loadCachedImages()
+            var cachedCats = localPrefs.loadCachedCategories()
+
+            // If DataStore JSON cache is empty, also check Firestore local disk cache (fast, local-only)
+            if (cachedImgs.isEmpty() && repository != null) {
+                cachedImgs = withTimeoutOrNull(300L) {
+                    repository.fetchAllPublishedImages(Source.CACHE).getOrNull()
+                }.orEmpty()
             }
-            if (cachedImgs.isNotEmpty()) {
-                _imagesUiState.value = UiState.Success(cachedImgs)
+            if (cachedCats.isEmpty() && repository != null) {
+                cachedCats = withTimeoutOrNull(250L) {
+                    repository.fetchAllPublishedCategories(Source.CACHE).getOrNull()
+                }.orEmpty()
             }
 
-            // Ensure anonymous session if needed, then sync with server
+            if (cachedCats.isNotEmpty()) {
+                _categoriesState.value = cachedCats.sortedBy { it.sortOrder }
+            }
+            if (cachedImgs.isNotEmpty()) {
+                _imagesUiState.value = UiState.Success(sortNewestFirst(cachedImgs))
+            }
+
+            // Dismiss splash immediately after local cache check!
+            _isInitialCacheLoaded.value = true
+
+            // 2. Silently sync from network in the background
             if (repository != null && isOnline.value) {
-                val uid = runCatching { repository.ensureSignedInUserId() }.getOrNull()
+                val uid = withTimeoutOrNull(5_000L) {
+                    runCatching { repository.ensureSignedInUserId() }.getOrNull()
+                }
                 if (!uid.isNullOrBlank()) {
-                    updateCurrentUserId(uid)
+                    withContext(Dispatchers.Main) {
+                        updateCurrentUserId(uid)
+                    }
                 }
             }
-            syncAndReconcileCatalog(force = true)
+            syncAndReconcileCatalog(force = true, showRefreshIndicator = false)
         }
 
         // 2. Listen to categories realtime stream when online
@@ -362,7 +389,7 @@ class LumiereViewModel(
             }
         }
 
-        // 3. Realtime listener on advertisementSettings/global (locked on first emission for current session; updates cache for next open)
+        // 3. Realtime listener on advertisementSettings/global
         viewModelScope.launch {
             _currentUserId.flatMapLatest {
                 repository?.observeAdvertisementSettings()
@@ -376,22 +403,23 @@ class LumiereViewModel(
             }
         }
 
-        // 4. Sync and reconcile automatically when connectivity returns (or if > 6 hours old)
+        // 4. Silently sync when connectivity returns
         viewModelScope.launch {
             var wasOnline = isOnline.value
             isOnline.collect { onlineNow ->
                 if (onlineNow && !wasOnline) {
-                    val lastSync = localPrefs.getLastCatalogSyncTimestampMs()
-                    val currentImages = (_imagesUiState.value as? UiState.Success)?.data.orEmpty()
-                    val needsSync = currentImages.isEmpty() ||
-                        (System.currentTimeMillis() - lastSync) >= SIX_HOURS_MS
-                    if (needsSync) {
-                        syncAndReconcileCatalog(force = true)
-                    }
+                    syncAndReconcileCatalog(force = true, showRefreshIndicator = false)
                 }
                 wasOnline = onlineNow
             }
         }
+    }
+
+    private fun sortNewestFirst(images: List<InspirationImage>): List<InspirationImage> {
+        return images.sortedWith(
+            compareByDescending<InspirationImage> { it.createdAt?.seconds ?: 0L }
+                .thenBy { it.displayOrder }
+        )
     }
 
     fun updateCurrentUserId(newUid: String?) {
@@ -420,18 +448,29 @@ class LumiereViewModel(
     }
 
     /**
-     * Fetches current published images & categories from Firestore and reconciles the local cache:
-     * - Anything no longer published (deleted or unlisted in admin) is removed from local cache,
-     *   lists, and saved screen, and its cached image file is evicted from Coil.
+     * Silently syncs in the background when the Home tab is tapped.
      */
-    fun syncAndReconcileCatalog(force: Boolean = false) {
-        viewModelScope.launch {
+    fun onHomeTabSelected() {
+        if (isOnline.value) {
+            syncAndReconcileCatalog(force = true, showRefreshIndicator = false)
+        }
+    }
+
+    /**
+     * Fetches current published images & categories from Firestore in the background and
+     * updates the UI silently without flickering or blocking spinners.
+     */
+    fun syncAndReconcileCatalog(
+        force: Boolean = false,
+        showRefreshIndicator: Boolean = false
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
             val cachedImages = localPrefs.loadCachedImages()
             val cachedCategories = localPrefs.loadCachedCategories()
 
             if (repository == null) {
-                _categoriesState.value = cachedCategories
-                _imagesUiState.value = UiState.Success(cachedImages)
+                if (cachedCategories.isNotEmpty()) _categoriesState.value = cachedCategories
+                _imagesUiState.value = UiState.Success(sortNewestFirst(cachedImages))
                 _isRefreshing.value = false
                 return@launch
             }
@@ -440,7 +479,9 @@ class LumiereViewModel(
                 if (cachedCategories.isNotEmpty()) {
                     _categoriesState.value = cachedCategories
                 }
-                _imagesUiState.value = UiState.Success(cachedImages)
+                if (_imagesUiState.value !is UiState.Success) {
+                    _imagesUiState.value = UiState.Success(sortNewestFirst(cachedImages))
+                }
                 _isRefreshing.value = false
                 return@launch
             }
@@ -448,30 +489,46 @@ class LumiereViewModel(
             val lastSync = localPrefs.getLastCatalogSyncTimestampMs()
             val withinSixHours = (System.currentTimeMillis() - lastSync) < SIX_HOURS_MS
             if (!force && withinSixHours && cachedImages.isNotEmpty()) {
-                _imagesUiState.value = UiState.Success(cachedImages)
+                if (_imagesUiState.value !is UiState.Success) {
+                    _imagesUiState.value = UiState.Success(sortNewestFirst(cachedImages))
+                }
                 _isRefreshing.value = false
                 return@launch
             }
 
-            if (cachedImages.isEmpty()) {
+            // Only show skeleton loading if the cache is completely empty on very first launch
+            val existingDisplayed = (_imagesUiState.value as? UiState.Success)?.data.orEmpty()
+            if (existingDisplayed.isEmpty() && cachedImages.isEmpty()) {
                 _imagesUiState.value = UiState.Loading
+            } else if (existingDisplayed.isEmpty() && cachedImages.isNotEmpty()) {
+                _imagesUiState.value = UiState.Success(sortNewestFirst(cachedImages))
             }
 
-            runCatching { repository.ensureSignedInUserId() }.getOrNull()?.let { uid ->
-                updateCurrentUserId(uid)
+            withTimeoutOrNull(4_000L) {
+                runCatching { repository.ensureSignedInUserId() }.getOrNull()
+            }?.let { uid ->
+                withContext(Dispatchers.Main) {
+                    updateCurrentUserId(uid)
+                }
             }
 
-            val imagesResult = repository.fetchAllPublishedImages(Source.SERVER)
-            val categoriesResult = repository.fetchAllPublishedCategories(Source.SERVER)
+            val imagesResult = withTimeoutOrNull(SYNC_TIMEOUT_MS) {
+                repository.fetchAllPublishedImages(Source.SERVER)
+            } ?: Result.failure(IllegalStateException("Network timeout"))
+
+            val categoriesResult = withTimeoutOrNull(SYNC_TIMEOUT_MS) {
+                repository.fetchAllPublishedCategories(Source.SERVER)
+            }
 
             imagesResult.fold(
                 onSuccess = { freshImages ->
-                    val freshCategories = categoriesResult.getOrNull() ?: _categoriesState.value
+                    val sortedFresh = sortNewestFirst(freshImages)
+                    val freshCategories = categoriesResult?.getOrNull() ?: _categoriesState.value
                     _categoriesState.value = freshCategories
-                    _imagesUiState.value = UiState.Success(freshImages)
+                    _imagesUiState.value = UiState.Success(sortedFresh)
 
                     val removedUrls = localPrefs.reconcileAndSaveCatalog(
-                        freshImages = freshImages,
+                        freshImages = sortedFresh,
                         freshCategories = freshCategories
                     )
                     if (removedUrls.isNotEmpty()) {
@@ -479,7 +536,7 @@ class LumiereViewModel(
                     }
 
                     // Prefetch priority (~20) images + background Wi-Fi prefetch for remaining
-                    val allUrls = freshImages.map { it.imageUrl }.filter { it.isNotBlank() }
+                    val allUrls = sortedFresh.map { it.imageUrl }.filter { it.isNotBlank() }
                     NetworkAndCacheManager.prefetchCatalogImages(
                         context = appContext,
                         scope = viewModelScope,
@@ -487,17 +544,14 @@ class LumiereViewModel(
                         remainingUrls = allUrls.drop(20)
                     )
                 },
-                onFailure = { error ->
-                    if (cachedImages.isNotEmpty()) {
-                        _imagesUiState.value = UiState.Success(cachedImages)
-                    } else {
-                        _imagesUiState.value = UiState.Error(
-                            error.localizedMessage ?: appContext.getString(R.string.error_loading_content)
-                        )
-                    }
+                onFailure = {
+                    val fallback = existingDisplayed.ifEmpty { cachedImages }
+                    _imagesUiState.value = UiState.Success(sortNewestFirst(fallback))
                 }
             )
-            _isRefreshing.value = false
+            if (showRefreshIndicator || _isRefreshing.value) {
+                _isRefreshing.value = false
+            }
         }
     }
 
@@ -508,7 +562,7 @@ class LumiereViewModel(
             return
         }
         _isRefreshing.value = true
-        syncAndReconcileCatalog(force = true)
+        syncAndReconcileCatalog(force = true, showRefreshIndicator = true)
     }
 
     fun observeCommentsForImage(imageId: String) {
@@ -550,57 +604,70 @@ class LumiereViewModel(
                 pendingUnsyncedViewImageIds.add(image.id)
             }
         }
-
-        // If reusePreviousUnlocks == true and online, check if already unlocked by this UID in Firestore
-        if (_advertisementSettings.value.reusePreviousUnlocks && isOnline.value && repository != null) {
-            viewModelScope.launch {
-                val previousPrompt = repository.readPreviouslyUnlockedPromptIfAvailable(image.id).getOrNull()
-                if (!previousPrompt.isNullOrBlank()) {
-                    _activeDetailPromptText.value = previousPrompt
-                }
-            }
-        }
     }
 
     /**
-     * Executes step (d) of the Prompt flow:
+     * Reveals the prompt for the current detail visit:
      * Ensures `promptUnlocks/{uid}_{imageId}` exists, then reads `imagePrompts/{imageId}`
      * into memory-only state [_activeDetailPromptText].
+     * If the prompt does not exist for this image, sets [_isPromptComingSoon] to true
+     * so the UI shows "Prompt coming soon"; for network problems shows "Turn on internet and try again".
      */
     fun unlockAndLoadPromptForCurrentVisit(image: InspirationImage, adNetwork: String) {
         if (!isOnline.value) {
-            emitOfflineMessage()
+            _isPromptComingSoon.value = false
+            _activeDetailPromptText.value = null
+            emitMessage(appContext.getString(R.string.turn_on_internet_message))
             return
         }
         val repo = repository ?: run {
-            emitMessage(appContext.getString(R.string.prompt_unavailable))
+            _isPromptComingSoon.value = true
             return
         }
         viewModelScope.launch {
-            _isLoadingDetailPrompt.value = true
             val result = repo.ensureUnlockAndReadPrompt(image, adNetwork)
-            _isLoadingDetailPrompt.value = false
             result.fold(
                 onSuccess = { promptText ->
+                    _isPromptComingSoon.value = false
                     _activeDetailPromptText.value = promptText
                 },
-                onFailure = {
-                    emitMessage(appContext.getString(R.string.prompt_unavailable))
+                onFailure = { err ->
+                    android.util.Log.e(
+                        "LumiereViewModel",
+                        "unlockAndLoadPromptForCurrentVisit failed for imageId=${image.id}",
+                        err
+                    )
+                    if (err is PromptComingSoonException) {
+                        _isPromptComingSoon.value = true
+                    } else {
+                        _isPromptComingSoon.value = false
+                        _activeDetailPromptText.value = null
+                        emitMessage(appContext.getString(R.string.turn_on_internet_message))
+                    }
                 }
             )
         }
     }
 
-    fun toggleLike(image: InspirationImage, onRequireSignIn: () -> Unit) {
+    fun toggleLike(
+        image: InspirationImage,
+        onRequireSignIn: (afterSignInAction: () -> Unit) -> Unit
+    ) {
         if (!isOnline.value) {
             emitOfflineMessage()
             return
         }
         val currentUser = runCatching { Firebase.auth.currentUser }.getOrNull()
         if (!GoogleSignInManager.isRealAuthenticatedUser(currentUser)) {
-            onRequireSignIn()
+            onRequireSignIn {
+                executeToggleLike(image)
+            }
             return
         }
+        executeToggleLike(image)
+    }
+
+    private fun executeToggleLike(image: InspirationImage) {
         val repo = repository ?: return
         val currentlyLiked = likedImageIds.value.contains(image.id)
         viewModelScope.launch {
@@ -638,21 +705,31 @@ class LumiereViewModel(
         }
     }
 
-    fun postComment(imageId: String, rawText: String, onRequireSignIn: () -> Unit) {
+    fun postComment(
+        imageId: String,
+        rawText: String,
+        onRequireSignIn: (afterSignInAction: () -> Unit) -> Unit
+    ) {
         if (!isOnline.value) {
             emitOfflineMessage()
             return
         }
-        val currentUser = runCatching { Firebase.auth.currentUser }.getOrNull()
-        if (!GoogleSignInManager.isRealAuthenticatedUser(currentUser)) {
-            onRequireSignIn()
-            return
-        }
         val trimmed = rawText.trim()
         if (trimmed.isEmpty()) return
+        val currentUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+        if (!GoogleSignInManager.isRealAuthenticatedUser(currentUser)) {
+            onRequireSignIn {
+                executePostComment(imageId, trimmed)
+            }
+            return
+        }
+        executePostComment(imageId, trimmed)
+    }
+
+    private fun executePostComment(imageId: String, trimmedText: String) {
         val repo = repository ?: return
         viewModelScope.launch {
-            val res = repo.postComment(imageId, trimmed)
+            val res = repo.postComment(imageId, trimmedText)
             res.onSuccess {
                 updateLocalCatalogImageCount(imageId) { img ->
                     img.copy(commentCount = img.commentCount + 1L)
@@ -681,16 +758,26 @@ class LumiereViewModel(
         }
     }
 
-    fun reportComment(comment: ImageComment, reason: String, onRequireSignIn: () -> Unit) {
+    fun reportComment(
+        comment: ImageComment,
+        reason: String,
+        onRequireSignIn: (afterSignInAction: () -> Unit) -> Unit
+    ) {
         if (!isOnline.value) {
             emitOfflineMessage()
             return
         }
         val currentUser = runCatching { Firebase.auth.currentUser }.getOrNull()
         if (!GoogleSignInManager.isRealAuthenticatedUser(currentUser)) {
-            onRequireSignIn()
+            onRequireSignIn {
+                executeReportComment(comment, reason)
+            }
             return
         }
+        executeReportComment(comment, reason)
+    }
+
+    private fun executeReportComment(comment: ImageComment, reason: String) {
         val repo = repository ?: return
         viewModelScope.launch {
             val res = repo.reportComment(comment.id, comment.imageId, reason)

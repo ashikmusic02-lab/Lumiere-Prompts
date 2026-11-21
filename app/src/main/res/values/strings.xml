@@ -12,17 +12,15 @@
 
     <!-- Connectivity & Offline -->
     <string name="offline_banner_message">No internet connection. Turn on mobile data or Wi-Fi.</string>
-    <string name="turn_on_internet_message">Please turn on your internet connection</string>
+    <string name="turn_on_internet_message">Turn on internet and try again</string>
 
     <!-- Home & Search -->
     <string name="search_placeholder">Search inspirations…</string>
     <string name="category_all">All</string>
-    <string name="section_featured">Featured</string>
     <string name="empty_inspirations">No inspirations yet</string>
     <string name="empty_search_results">No matching results</string>
     <string name="error_loading_content">Could not load content</string>
     <string name="retry_action">Retry</string>
-    <string name="refresh_action">Refresh</string>
 
     <!-- Categories & Sorting -->
     <string name="categories_title">Categories</string>
@@ -33,7 +31,7 @@
     <string name="sort_most_liked">Most Liked</string>
 
     <!-- Image Detail & Prompt -->
-    <string name="watch_ad_to_view_prompt">Watch ad to view prompt</string>
+    <string name="get_prompt_action">Get Prompt</string>
     <string name="prompt_heading">Prompt</string>
     <string name="copy_action">Copy</string>
     <string name="copied_message">Copied</string>
@@ -42,7 +40,7 @@
     <string name="saved_action">Saved</string>
     <string name="like_action">Like</string>
     <string name="back_action">Back</string>
-    <string name="prompt_unavailable">Prompt is not available right now</string>
+    <string name="prompt_coming_soon">Prompt coming soon</string>
 
     <!-- Comments & Moderation -->
     <string name="comments_header">Comments (%1$d)</string>
@@ -93,7 +91,7 @@
     <string name="theme_light">Light</string>
     <string name="theme_system">System</string>
     <string name="notifications_settings_label">Notification settings</string>
-    <string name="ad_privacy_settings_label">Ad privacy settings</string>
+    <string name="ad_privacy_settings_label">Privacy choices</string>
     <string name="privacy_policy_label">Privacy Policy</string>
     <string name="terms_of_use_label">Terms of Use</string>
     <string name="about_label">About</string>

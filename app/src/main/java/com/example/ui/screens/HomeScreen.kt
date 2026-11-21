@@ -20,11 +20,9 @@ import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.ImageSearch
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -33,7 +31,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,19 +52,16 @@ import com.example.model.AdvertisementSettings
 import com.example.model.CategoryItem
 import com.example.model.InspirationImage
 import com.example.model.UiState
-import com.example.ui.components.FeaturedHeroCard
 import com.example.ui.components.InspirationGalleryCard
 import com.example.ui.components.ShimmerSkeletonCard
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     imagesUiState: UiState<List<InspirationImage>>,
     categories: List<CategoryItem>,
     likedIds: Set<String>,
     advertisementSettings: AdvertisementSettings,
-    isRefreshing: Boolean,
-    onRefresh: () -> Unit,
+    onRetrySync: () -> Unit,
     onImageClick: (InspirationImage) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -81,6 +75,10 @@ fun HomeScreen(
     val allPublishedImages = remember(imagesUiState) {
         (imagesUiState as? UiState.Success)?.data
             ?.filter { it.status == "published" }
+            ?.sortedWith(
+                compareByDescending<InspirationImage> { it.createdAt?.seconds ?: 0L }
+                    .thenBy { it.displayOrder }
+            )
             .orEmpty()
     }
 
@@ -104,235 +102,199 @@ fun HomeScreen(
             .fillMaxSize()
             .testTag("home_screen_container")
     ) {
-        PullToRefreshBox(
-            isRefreshing = isRefreshing,
-            onRefresh = onRefresh,
+        LazyVerticalStaggeredGrid(
+            columns = StaggeredGridCells.Fixed(2),
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth()
+                .fillMaxWidth(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 12.dp,
+                bottom = 20.dp
+            ),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalItemSpacing = 12.dp
         ) {
-            LazyVerticalStaggeredGrid(
-                columns = StaggeredGridCells.Fixed(2),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
-                    top = 12.dp,
-                    bottom = 20.dp
-                ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalItemSpacing = 12.dp
-            ) {
-                // 1. Top Bar: Logo + App Name
-                item(span = StaggeredGridItemSpan.FullLine) {
-                    Row(
+            // 1. Clean Top Bar: Logo + App Name (NO manual refresh / reload icon)
+            item(span = StaggeredGridItemSpan.FullLine) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_promptlens_logo),
+                        contentDescription = stringResource(R.string.app_name),
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.ic_promptlens_logo),
-                                contentDescription = stringResource(R.string.app_name),
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                            )
-                            Text(
-                                text = stringResource(R.string.app_name),
-                                style = MaterialTheme.typography.titleLarge,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        IconButton(
-                            onClick = onRefresh,
-                            modifier = Modifier.testTag("home_refresh_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = stringResource(R.string.refresh_action),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-
-                // 2. Search Field
-                item(span = StaggeredGridItemSpan.FullLine) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = {
-                            Text(
-                                text = stringResource(R.string.search_placeholder),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Search,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(
-                                    onClick = { searchQuery = "" },
-                                    modifier = Modifier.testTag("clear_home_search_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = null
-                                    )
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(16.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("home_search_input")
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                    )
+                    Text(
+                        text = stringResource(R.string.app_name),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.ExtraBold
                     )
                 }
+            }
 
-                // 3. Category Chips (All + published categories sorted by sortOrder)
-                if (publishedCategories.isNotEmpty()) {
-                    item(span = StaggeredGridItemSpan.FullLine) {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            contentPadding = PaddingValues(vertical = 2.dp),
-                            modifier = Modifier.testTag("home_category_row")
-                        ) {
-                            item {
-                                val isAllSelected = selectedCategoryId == "all"
-                                FilterChip(
-                                    selected = isAllSelected,
-                                    onClick = { selectedCategoryId = "all" },
-                                    label = {
-                                        Text(
-                                            text = stringResource(R.string.category_all),
-                                            style = MaterialTheme.typography.labelLarge
-                                        )
-                                    },
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
-                                        selectedLabelColor = MaterialTheme.colorScheme.primary
-                                    ),
-                                    modifier = Modifier.testTag("home_chip_all")
-                                )
-                            }
-                            items(publishedCategories, key = { it.id }) { category ->
-                                val isSelected = selectedCategoryId == category.id
-                                FilterChip(
-                                    selected = isSelected,
-                                    onClick = {
-                                        selectedCategoryId = if (isSelected) "all" else category.id
-                                    },
-                                    label = {
-                                        Text(
-                                            text = category.name,
-                                            style = MaterialTheme.typography.labelLarge
-                                        )
-                                    },
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
-                                        selectedLabelColor = MaterialTheme.colorScheme.primary
-                                    ),
-                                    modifier = Modifier.testTag("home_chip_${category.id}")
+            // 2. Search Field
+            item(span = StaggeredGridItemSpan.FullLine) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = {
+                        Text(
+                            text = stringResource(R.string.search_placeholder),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(
+                                onClick = { searchQuery = "" },
+                                modifier = Modifier.testTag("clear_home_search_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = null
                                 )
                             }
                         }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(18.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("home_search_input")
+                )
+            }
+
+            // 3. Category Chips Row: ONLY category names as text chips (plus "All" first)
+            item(span = StaggeredGridItemSpan.FullLine) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(vertical = 2.dp),
+                    modifier = Modifier.testTag("home_category_row")
+                ) {
+                    item(key = "chip_all") {
+                        val isAllSelected = selectedCategoryId == "all"
+                        FilterChip(
+                            selected = isAllSelected,
+                            onClick = { selectedCategoryId = "all" },
+                            label = {
+                                Text(
+                                    text = stringResource(R.string.category_all),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            },
+                            shape = RoundedCornerShape(50),
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isAllSelected,
+                                borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                selectedBorderColor = MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.testTag("home_chip_all")
+                        )
+                    }
+                    items(publishedCategories, key = { it.id }) { category ->
+                        val isSelected = selectedCategoryId == category.id
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                selectedCategoryId = if (isSelected) "all" else category.id
+                            },
+                            label = {
+                                Text(
+                                    text = category.name,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            },
+                            shape = RoundedCornerShape(50),
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = isSelected,
+                                borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                selectedBorderColor = MaterialTheme.colorScheme.primary
+                            ),
+                            modifier = Modifier.testTag("home_chip_${category.id}")
+                        )
+                    }
+                }
+            }
+
+            // 4. ONE Uniform Staggered 2-Column Grid containing ALL images (newest first)
+            // Shimmer skeleton cards are shown ONLY on the very first launch with an empty cache.
+            when (imagesUiState) {
+                is UiState.Loading -> {
+                    items(6) { index ->
+                        ShimmerSkeletonCard(
+                            aspectRatio = if (index % 2 == 0) 0.75f else 0.9f
+                        )
                     }
                 }
 
-                // 4. Content States: Shimmer Loading, Error with Retry, or Catalog Sections
-                when (imagesUiState) {
-                    is UiState.Loading -> {
-                        items(6) { index ->
-                            ShimmerSkeletonCard(
-                                aspectRatio = if (index % 2 == 0) 0.75f else 0.9f
-                            )
-                        }
+                is UiState.Error -> {
+                    item(span = StaggeredGridItemSpan.FullLine) {
+                        HomeErrorState(
+                            message = imagesUiState.message,
+                            onRetry = onRetrySync
+                        )
                     }
+                }
 
-                    is UiState.Error -> {
+                is UiState.Success -> {
+                    if (allPublishedImages.isEmpty()) {
                         item(span = StaggeredGridItemSpan.FullLine) {
-                            HomeErrorState(
-                                message = imagesUiState.message,
-                                onRetry = onRefresh
+                            HomeEmptyState(
+                                title = stringResource(R.string.empty_inspirations)
                             )
                         }
-                    }
-
-                    is UiState.Success -> {
-                        if (allPublishedImages.isEmpty()) {
-                            item(span = StaggeredGridItemSpan.FullLine) {
-                                HomeEmptyState(
-                                    title = stringResource(R.string.empty_inspirations)
-                                )
-                            }
-                        } else if (filteredImages.isEmpty()) {
-                            item(span = StaggeredGridItemSpan.FullLine) {
-                                HomeEmptyState(
-                                    title = stringResource(R.string.empty_search_results)
-                                )
-                            }
-                        } else {
-                            // Featured Horizontal Row (only if featured items exist and not actively filtering by text)
-                            val featuredImages = filteredImages.filter { it.featured }
-                            if (featuredImages.isNotEmpty() && searchQuery.isBlank() && selectedCategoryId == "all") {
-                                item(span = StaggeredGridItemSpan.FullLine) {
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                                        modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
-                                    ) {
-                                        Text(
-                                            text = stringResource(R.string.section_featured),
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = MaterialTheme.colorScheme.onBackground,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                        LazyRow(
-                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                            modifier = Modifier.testTag("featured_carousel")
-                                        ) {
-                                            items(featuredImages, key = { "featured_${it.id}" }) { item ->
-                                                FeaturedHeroCard(
-                                                    image = item,
-                                                    isLiked = likedIds.contains(item.id),
-                                                    onClick = { onImageClick(item) }
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // 2-Column Staggered Grid of posts
-                            items(filteredImages, key = { it.id }) { image ->
-                                InspirationGalleryCard(
-                                    image = image,
-                                    isLiked = likedIds.contains(image.id),
-                                    onClick = { onImageClick(image) }
-                                )
-                            }
+                    } else if (filteredImages.isEmpty()) {
+                        item(span = StaggeredGridItemSpan.FullLine) {
+                            HomeEmptyState(
+                                title = stringResource(R.string.empty_search_results)
+                            )
+                        }
+                    } else {
+                        items(filteredImages, key = { it.id }) { image ->
+                            InspirationGalleryCard(
+                                image = image,
+                                isLiked = likedIds.contains(image.id),
+                                onClick = { onImageClick(image) }
+                            )
                         }
                     }
                 }

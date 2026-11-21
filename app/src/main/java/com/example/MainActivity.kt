@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.view.ViewTreeObserver
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -28,7 +30,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Category
@@ -41,10 +42,8 @@ import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.WifiOff
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -54,7 +53,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -64,6 +62,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,7 +71,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.credentials.CredentialManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -94,7 +96,9 @@ import com.example.ui.theme.LumiereTheme
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class PromptLensNavTab(
     val titleRes: Int,
@@ -111,21 +115,48 @@ enum class PromptLensNavTab(
 
 class MainActivity : AppCompatActivity() {
 
+    @Volatile
+    private var isCacheReadyForSplashDismiss = false
+    private var splashStartTimeMs = 0L
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        splashStartTimeMs = System.currentTimeMillis()
+        AdMobManager.purgeCorruptedWebViewVariationsSeeds(this)
         enableEdgeToEdge()
 
-        OneSignalDeepLinkManager.initialize(applicationContext)
-        OneSignalDeepLinkManager.handleIncomingIntent(intent)
+        // Hold native Android SplashScreen only until cached data is read from local storage
+        // (with a strict <450ms cap so it never waits for network, auth, ads, UMP, or OneSignal).
+        val contentView: View = findViewById(android.R.id.content)
+        contentView.viewTreeObserver.addOnPreDrawListener(
+            object : ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    val elapsed = System.currentTimeMillis() - splashStartTimeMs
+                    return if (isCacheReadyForSplashDismiss || elapsed >= 450L) {
+                        contentView.viewTreeObserver.removeOnPreDrawListener(this)
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+        )
 
-        // UMP Consent check at launch before initializing MobileAds
-        AdMobManager.requestConsentAndInitializeAds(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            splashScreen.setOnExitAnimationListener { splashScreenView ->
+                splashScreenView.remove()
+            }
+        }
+
+        // Handle deep link intent extras immediately without network calls
+        OneSignalDeepLinkManager.handleIncomingIntent(intent)
 
         setContent {
             val context = LocalContext.current
             val coroutineScope = rememberCoroutineScope()
             val credentialManager = remember { CredentialManager.create(context) }
 
+            // Silently restore any existing Firebase Auth user (Google or anonymous) without showing any popup
             val initialUser = remember {
                 if (GoogleSignInManager.isFirebaseConfigured(context)) {
                     runCatching { Firebase.auth.currentUser }.getOrNull()
@@ -134,19 +165,33 @@ class MainActivity : AppCompatActivity() {
             val currentUser by GoogleSignInManager.authStateFlow(context)
                 .collectAsState(initial = initialUser)
 
-            LaunchedEffect(Unit) {
-                GoogleSignInManager.attemptAutoSignIn(
-                    context = context,
-                    credentialManager = credentialManager,
-                    onAuthSuccess = {},
-                    onUnauthenticated = {},
-                    scope = coroutineScope
-                )
-            }
-
             val viewModel: LumiereViewModel = viewModel(
                 factory = LumiereViewModel.factory(currentUser?.uid)
             )
+
+            val isInitialCacheLoaded by viewModel.isInitialCacheLoaded.collectAsStateWithLifecycle()
+            LaunchedEffect(isInitialCacheLoaded) {
+                if (isInitialCacheLoaded) {
+                    isCacheReadyForSplashDismiss = true
+                }
+            }
+
+            // Initialize Firebase anonymous session, AdMob, UMP consent, and OneSignal in the background
+            // AFTER the first frame so startup is instant and never blocked.
+            LaunchedEffect(Unit) {
+                withFrameNanos { }
+                // 1. Background OneSignal init
+                withContext(Dispatchers.IO) {
+                    runCatching { OneSignalDeepLinkManager.initialize(applicationContext) }
+                }
+                // 2. Background UMP & AdMob init
+                runCatching { AdMobManager.requestConsentAndInitializeAds(this@MainActivity) }
+                // 3. Silently ensure anonymous guest session if no user is currently signed in (NEVER shows Google popup)
+                val user = GoogleSignInManager.ensureAnonymousSignInIfNeeded(context)
+                if (user != null) {
+                    viewModel.updateCurrentUserId(user.uid)
+                }
+            }
 
             LaunchedEffect(currentUser?.uid) {
                 viewModel.updateCurrentUserId(currentUser?.uid)
@@ -160,14 +205,18 @@ class MainActivity : AppCompatActivity() {
                 ThemePreference.SYSTEM -> isSystemInDarkTheme()
             }
 
+            val isBangla = languageTag.startsWith("bn", ignoreCase = true)
+
             LumiereTheme(
                 darkTheme = useDarkTheme,
-                isBangla = languageTag.startsWith("bn", ignoreCase = true)
+                isBangla = isBangla
             ) {
                 PromptLensAppRoot(
                     viewModel = viewModel,
                     firebaseUser = currentUser,
+                    isBangla = isBangla,
                     onSignInRequest = { onComplete ->
+                        // Directly invoke Google Sign-In sheet when explicitly requested by user
                         GoogleSignInManager.onGoogleSignInClicked(
                             context = context,
                             credentialManager = credentialManager,
@@ -184,6 +233,7 @@ class MainActivity : AppCompatActivity() {
                             },
                             scope = coroutineScope,
                             onAuthCancelled = {
+                                // User cancelled: return silently with no error message
                                 onComplete(false)
                             }
                         )
@@ -223,6 +273,7 @@ class MainActivity : AppCompatActivity() {
 fun PromptLensAppRoot(
     viewModel: LumiereViewModel,
     firebaseUser: FirebaseUser?,
+    isBangla: Boolean,
     onSignInRequest: (onComplete: (Boolean) -> Unit) -> Unit,
     onSignOut: () -> Unit,
     onAccountDeleted: () -> Unit
@@ -233,7 +284,7 @@ fun PromptLensAppRoot(
     val likedIds by viewModel.likedImageIds.collectAsStateWithLifecycle()
     val favoritedIds by viewModel.favoritedImageIds.collectAsStateWithLifecycle()
     val activeDetailPromptText by viewModel.activeDetailPromptText.collectAsStateWithLifecycle()
-    val isLoadingDetailPrompt by viewModel.isLoadingDetailPrompt.collectAsStateWithLifecycle()
+    val isPromptComingSoon by viewModel.isPromptComingSoon.collectAsStateWithLifecycle()
     val activeComments by viewModel.activeComments.collectAsStateWithLifecycle()
     val mergedNotifications by viewModel.mergedNotificationsState.collectAsStateWithLifecycle()
     val hasUnreadNotifications by viewModel.hasUnreadNotifications.collectAsStateWithLifecycle()
@@ -242,7 +293,6 @@ fun PromptLensAppRoot(
     val themePreference by viewModel.themePreference.collectAsStateWithLifecycle()
     val languageTag by viewModel.languageTag.collectAsStateWithLifecycle()
     val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
-    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val isRealUser by viewModel.isRealUserFlow.collectAsStateWithLifecycle()
     val currentUserId by viewModel.currentUserIdFlow.collectAsStateWithLifecycle()
     val notificationPermissionAsked by viewModel.notificationPermissionAsked.collectAsStateWithLifecycle()
@@ -252,7 +302,6 @@ fun PromptLensAppRoot(
     var currentTab by rememberSaveable { mutableStateOf(PromptLensNavTab.HOME) }
     var activeDetailImageId by rememberSaveable { mutableStateOf<String?>(null) }
     var deepLinkedFallbackImage by remember { mutableStateOf<InspirationImage?>(null) }
-    var showSignInDialog by remember { mutableStateOf(false) }
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -262,10 +311,15 @@ fun PromptLensAppRoot(
         }
     }
 
-    // Preload interstitial ad when ad settings become available
+    // Preload rewarded and interstitial ads in background when ad settings become available
     LaunchedEffect(advertisementSettings) {
-        if (advertisementSettings.allAdsEnabled && advertisementSettings.interstitialAdsEnabled) {
-            AdMobManager.preloadInterstitialIfNeeded(context, advertisementSettings)
+        if (advertisementSettings.allAdsEnabled) {
+            if (advertisementSettings.rewardedAdsEnabled) {
+                AdMobManager.preloadRewardedAdIfNeeded(context, advertisementSettings)
+            }
+            if (advertisementSettings.interstitialAdsEnabled) {
+                AdMobManager.preloadInterstitialIfNeeded(context, advertisementSettings)
+            }
         }
     }
 
@@ -330,45 +384,13 @@ fun PromptLensAppRoot(
         }
     }
 
-    // Google Sign-In Dialog for guests attempting gated actions (Like, Comment, Report, or requireLoginForPrompts)
-    if (showSignInDialog) {
-        AlertDialog(
-            onDismissRequest = { showSignInDialog = false },
-            title = {
-                Text(
-                    text = stringResource(R.string.sign_in_required_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Text(
-                    text = stringResource(R.string.sign_in_required_body),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showSignInDialog = false
-                        onSignInRequest {}
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.testTag("dialog_google_sign_in_button")
-                ) {
-                    Text(text = stringResource(R.string.sign_in_with_google))
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { showSignInDialog = false },
-                    modifier = Modifier.testTag("dialog_cancel_sign_in_button")
-                ) {
-                    Text(text = stringResource(R.string.cancel_action))
-                }
+    // Helper that opens the Google Sign-In sheet directly and executes the pending action if sign-in succeeds
+    val requestGoogleSignInAndContinue: ((() -> Unit) -> Unit) = { afterSignInAction ->
+        onSignInRequest { success ->
+            if (success) {
+                afterSignInAction()
             }
-        )
+        }
     }
 
     Scaffold(
@@ -381,7 +403,13 @@ fun PromptLensAppRoot(
                 PromptLensBottomNavigationBar(
                     currentTab = currentTab,
                     hasUnreadNotifications = hasUnreadNotifications,
-                    onTabSelected = { currentTab = it }
+                    isBangla = isBangla,
+                    onTabSelected = { selectedTab ->
+                        currentTab = selectedTab
+                        if (selectedTab == PromptLensNavTab.HOME) {
+                            viewModel.onHomeTabSelected()
+                        }
+                    }
                 )
             }
         }
@@ -435,7 +463,7 @@ fun PromptLensAppRoot(
                         isOnline = isOnline,
                         isRealUser = isRealUser,
                         activePromptText = activeDetailPromptText,
-                        isLoadingPrompt = isLoadingDetailPrompt,
+                        isPromptComingSoon = isPromptComingSoon,
                         comments = activeComments,
                         currentUserId = currentUserId,
                         advertisementSettings = advertisementSettings,
@@ -447,7 +475,7 @@ fun PromptLensAppRoot(
                         onToggleLike = {
                             viewModel.toggleLike(
                                 image = detailImg,
-                                onRequireSignIn = { showSignInDialog = true }
+                                onRequireSignIn = requestGoogleSignInAndContinue
                             )
                         },
                         onToggleFavorite = {
@@ -466,7 +494,7 @@ fun PromptLensAppRoot(
                             viewModel.postComment(
                                 imageId = detailImg.id,
                                 rawText = text,
-                                onRequireSignIn = { showSignInDialog = true }
+                                onRequireSignIn = requestGoogleSignInAndContinue
                             )
                         },
                         onDeleteComment = { comment ->
@@ -476,15 +504,13 @@ fun PromptLensAppRoot(
                             viewModel.reportComment(
                                 comment = comment,
                                 reason = reason,
-                                onRequireSignIn = { showSignInDialog = true }
+                                onRequireSignIn = requestGoogleSignInAndContinue
                             )
                         },
                         onBlockUser = { blockedUid ->
                             viewModel.blockUserLocally(blockedUid)
                         },
-                        onRequireSignIn = {
-                            showSignInDialog = true
-                        },
+                        onRequireSignIn = requestGoogleSignInAndContinue,
                         onEmitMessage = { msg ->
                             viewModel.emitMessage(msg)
                         }
@@ -508,8 +534,7 @@ fun PromptLensAppRoot(
                                     categories = categories,
                                     likedIds = likedIds,
                                     advertisementSettings = advertisementSettings,
-                                    isRefreshing = isRefreshing,
-                                    onRefresh = { viewModel.onPullToRefresh() },
+                                    onRetrySync = { viewModel.onHomeTabSelected() },
                                     onImageClick = openDetail
                                 )
                             }
@@ -529,7 +554,10 @@ fun PromptLensAppRoot(
                                     favoritedIds = favoritedIds,
                                     likedIds = likedIds,
                                     onImageClick = openDetail,
-                                    onGoToHome = { currentTab = PromptLensNavTab.HOME }
+                                    onGoToHome = {
+                                        currentTab = PromptLensNavTab.HOME
+                                        viewModel.onHomeTabSelected()
+                                    }
                                 )
                             }
 
@@ -598,60 +626,77 @@ fun PromptLensAppRoot(
 private fun PromptLensBottomNavigationBar(
     currentTab: PromptLensNavTab,
     hasUnreadNotifications: Boolean,
+    isBangla: Boolean,
     onTabSelected: (PromptLensNavTab) -> Unit
 ) {
-    NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("bottom_navigation_bar")
-    ) {
-        PromptLensNavTab.entries.forEach { tab ->
-            val selected = currentTab == tab
-            val label = stringResource(tab.titleRes)
-            NavigationBarItem(
-                selected = selected,
-                onClick = { onTabSelected(tab) },
-                icon = {
-                    if (tab == PromptLensNavTab.NOTIFICATIONS && hasUnreadNotifications) {
-                        BadgedBox(
-                            badge = {
-                                Badge(
-                                    containerColor = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        androidx.compose.material3.HorizontalDivider(
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+        )
+        NavigationBar(
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("bottom_navigation_bar")
+        ) {
+            PromptLensNavTab.entries.forEach { tab ->
+                val selected = currentTab == tab
+                val label = stringResource(tab.titleRes)
+                NavigationBarItem(
+                    selected = selected,
+                    onClick = { onTabSelected(tab) },
+                    alwaysShowLabel = true,
+                    icon = {
+                        if (tab == PromptLensNavTab.NOTIFICATIONS && hasUnreadNotifications) {
+                            BadgedBox(
+                                badge = {
+                                    Badge(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                    )
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = if (selected) tab.selectedIcon else tab.unselectedIcon,
+                                    contentDescription = label
                                 )
                             }
-                        ) {
+                        } else {
                             Icon(
                                 imageVector = if (selected) tab.selectedIcon else tab.unselectedIcon,
                                 contentDescription = label
                             )
                         }
-                    } else {
-                        Icon(
-                            imageVector = if (selected) tab.selectedIcon else tab.unselectedIcon,
-                            contentDescription = label
+                    },
+                    label = {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = if (isBangla) 9.5.sp else 9.5.sp,
+                                lineHeight = 11.sp,
+                                letterSpacing = (-0.2).sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            ),
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center
                         )
-                    }
-                },
-                label = {
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                ),
-                modifier = Modifier.testTag(tab.testTag)
-            )
+                    },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    modifier = Modifier.testTag(tab.testTag)
+                )
+            }
         }
     }
 }

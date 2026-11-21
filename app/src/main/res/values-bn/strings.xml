@@ -4,7 +4,7 @@
     <!-- Bottom Navigation -->
     <string name="nav_home">হোম</string>
     <string name="nav_categories">ক্যাটাগরি</string>
-    <string name="nav_saved">সেভ করা</string>
+    <string name="nav_saved">সেভড</string>
     <string name="nav_notifications">নোটিফিকেশন</string>
     <string name="nav_profile">প্রোফাইল</string>
 
@@ -15,12 +15,10 @@
     <!-- Home & Search -->
     <string name="search_placeholder">অনুপ্রেরণা খুঁজুন…</string>
     <string name="category_all">সব</string>
-    <string name="section_featured">ফিচার্ড</string>
     <string name="empty_inspirations">এখনও কোনো অনুপ্রেরণা নেই</string>
     <string name="empty_search_results">কোনো ফলাফল পাওয়া যায়নি</string>
     <string name="error_loading_content">কনটেন্ট লোড করা যায়নি</string>
     <string name="retry_action">আবার চেষ্টা করুন</string>
-    <string name="refresh_action">রিফ্রেশ</string>
 
     <!-- Categories & Sorting -->
     <string name="categories_title">ক্যাটাগরি</string>
@@ -31,57 +29,57 @@
     <string name="sort_most_liked">সবচেয়ে পছন্দের</string>
 
     <!-- Image Detail & Prompt -->
-    <string name="watch_ad_to_view_prompt">বিজ্ঞাপন দেখে প্রম্পট দেখুন</string>
+    <string name="get_prompt_action">প্রম্পট নিন</string>
     <string name="prompt_heading">প্রম্পট</string>
     <string name="copy_action">কপি</string>
     <string name="copied_message">কপি হয়েছে</string>
     <string name="share_action">শেয়ার</string>
     <string name="save_action">সেভ</string>
-    <string name="saved_action">সেভ করা</string>
+    <string name="saved_action">সেভড</string>
     <string name="like_action">লাইক</string>
-    <string name="back_action">পেছনে</string>
-    <string name="prompt_unavailable">প্রম্পট এখন পাওয়া যাচ্ছে না</string>
+    <string name="back_action">ফিরুন</string>
+    <string name="prompt_coming_soon">প্রম্পট শীঘ্রই আসছে</string>
 
     <!-- Comments & Moderation -->
     <string name="comments_header">মন্তব্য (%1$d)</string>
-    <string name="comment_placeholder">একটি মন্তব্য লিখুন…</string>
-    <string name="comment_respect_note">শ্রদ্ধাশীল থাকুন। আপত্তিকর মন্তব্য মুছে ফেলা হয়।</string>
+    <string name="comment_placeholder">মন্তব্য লিখুন…</string>
+    <string name="comment_respect_note">সম্মানজনক ভাষা ব্যবহার করুন। আপত্তিকর মন্তব্য মুছে ফেলা হবে।</string>
     <string name="no_comments_yet">এখনও কোনো মন্তব্য নেই</string>
     <string name="reply_from_promptlens">PromptLens থেকে উত্তর</string>
     <string name="delete_comment">মুছুন</string>
     <string name="report_comment">রিপোর্ট</string>
-    <string name="block_user">ব্যবহারকারীকে ব্লক করুন</string>
+    <string name="block_user">ব্লক করুন</string>
     <string name="user_blocked_message">ব্যবহারকারীকে ব্লক করা হয়েছে</string>
     <string name="report_dialog_title">মন্তব্য রিপোর্ট করুন</string>
     <string name="report_reason_label">কারণ</string>
-    <string name="report_default_reason">আপত্তিকর বা স্প্যাম মন্তব্য</string>
+    <string name="report_default_reason">অনুপযুক্ত বা স্প্যাম মন্তব্য</string>
     <string name="submit_action">জমা দিন</string>
     <string name="cancel_action">বাতিল</string>
-    <string name="report_submitted_message">রিপোর্ট জমা দেওয়া হয়েছে</string>
+    <string name="report_submitted_message">রিপোর্ট জমা হয়েছে</string>
 
     <!-- Sign-in Prompt -->
     <string name="sign_in_required_title">Google দিয়ে সাইন ইন করুন</string>
     <string name="sign_in_required_body">চালিয়ে যেতে আপনার Google অ্যাকাউন্ট দিয়ে সাইন ইন করুন।</string>
 
     <!-- Saved Tab -->
-    <string name="saved_title">সেভ করা</string>
+    <string name="saved_title">সেভড</string>
     <string name="empty_saved">এখনও কোনো সেভ করা পোস্ট নেই</string>
     <string name="go_to_home">হোমে যান</string>
 
     <!-- Notifications Tab -->
     <string name="notifications_title">নোটিফিকেশন</string>
     <string name="empty_notifications">এখনও কোনো নোটিফিকেশন নেই</string>
-    <string name="post_no_longer_available">এই পোস্টটি আর পাওয়া যাচ্ছে না</string>
+    <string name="post_no_longer_available">এই পোস্টটি আর উপলব্ধ নেই</string>
     <string name="just_now">এইমাত্র</string>
-    <string name="minutes_ago">%1$d মিনিট আগে</string>
-    <string name="hours_ago">%1$d ঘণ্টা আগে</string>
+    <string name="minutes_ago">%1$d মি. আগে</string>
+    <string name="hours_ago">%1$d ঘ. আগে</string>
     <string name="days_ago">%1$d দিন আগে</string>
 
     <!-- Profile & Settings -->
     <string name="profile_title">প্রোফাইল</string>
     <string name="sign_in_with_google">Google দিয়ে সাইন ইন করুন</string>
-    <string name="signed_in_message">সাইন ইন হয়েছে</string>
-    <string name="signed_out_message">সাইন আউট হয়েছে</string>
+    <string name="signed_in_message">সাইন ইন সম্পন্ন হয়েছে</string>
+    <string name="signed_out_message">সাইন আউট সম্পন্ন হয়েছে</string>
     <string name="guest_user_title">PromptLens-এ স্বাগতম</string>
     <string name="language_label">ভাষা</string>
     <string name="theme_label">থিম</string>
@@ -89,7 +87,7 @@
     <string name="theme_light">লাইট</string>
     <string name="theme_system">সিস্টেম</string>
     <string name="notifications_settings_label">নোটিফিকেশন সেটিংস</string>
-    <string name="ad_privacy_settings_label">বিজ্ঞাপন গোপনীয়তা সেটিংস</string>
+    <string name="ad_privacy_settings_label">গোপনীয়তা পছন্দ</string>
     <string name="privacy_policy_label">গোপনীয়তা নীতি</string>
     <string name="terms_of_use_label">ব্যবহারের শর্তাবলী</string>
     <string name="about_label">অ্যাপ সম্পর্কে</string>
@@ -97,20 +95,20 @@
     <string name="contact_support_label">সাপোর্টে যোগাযোগ করুন</string>
     <string name="share_app_label">অ্যাপ শেয়ার করুন</string>
     <string name="rate_app_label">অ্যাপ রেট করুন</string>
-    <string name="clear_image_cache_label">ছবির ক্যাশ পরিষ্কার করুন</string>
-    <string name="image_cache_cleared">ছবির ক্যাশ পরিষ্কার করা হয়েছে</string>
+    <string name="clear_image_cache_label">ইমেজ ক্যাশ পরিষ্কার করুন</string>
+    <string name="image_cache_cleared">ইমেজ ক্যাশ পরিষ্কার করা হয়েছে</string>
     <string name="sign_out_label">সাইন আউট</string>
     <string name="delete_account_label">অ্যাকাউন্ট মুছে ফেলুন</string>
     <string name="delete_account_confirm_title">অ্যাকাউন্ট মুছে ফেলবেন?</string>
     <string name="delete_account_confirm_body">এটি আপনার অ্যাকাউন্ট, সেভ করা পোস্ট, লাইক এবং মন্তব্য স্থায়ীভাবে মুছে ফেলবে।</string>
-    <string name="delete_account_reauth_message">অ্যাকাউন্ট মুছে ফেলা নিশ্চিত করতে আবার Google দিয়ে সাইন ইন করুন।</string>
+    <string name="delete_account_reauth_message">অ্যাকাউন্ট মুছে ফেলা নিশ্চিত করতে অনুগ্রহ করে আবার Google দিয়ে সাইন ইন করুন।</string>
     <string name="account_deleted_message">অ্যাকাউন্ট মুছে ফেলা হয়েছে</string>
 
     <!-- Terms of Use -->
     <string name="terms_acceptable_use_title">১. গ্রহণযোগ্য ব্যবহার</string>
-    <string name="terms_acceptable_use_body">PromptLens ব্যক্তিগত ও সৃজনশীল ব্যবহারের জন্য ফটোগ্রাফি অনুপ্রেরণা এবং ইমেজ-জেনারেশন প্রম্পট প্রদান করে। সেবার অপব্যবহার, কনটেন্ট স্ক্র্যাপ বা অ্যাপের কার্যক্রমে বিঘ্ন ঘটাবেন না।</string>
+    <string name="terms_acceptable_use_body">PromptLens ব্যক্তিগত এবং সৃজনশীল ব্যবহারের জন্য ফটোগ্রাফি অনুপ্রেরণা এবং প্রম্পট প্রদান করে। সেবাটির অপব্যবহার বা অ্যাপের কার্যক্রমে বিঘ্ন ঘটানোর চেষ্টা করবেন না।</string>
     <string name="terms_comments_rules_title">২. মন্তব্যের নিয়মাবলী</string>
-    <string name="terms_comments_rules_body">মন্তব্যে সর্বদা শ্রদ্ধাশীল ও গঠনমূলক থাকুন। স্প্যাম, হয়রানি, ঘৃণামূলক বক্তব্য বা আপত্তিকর মন্তব্য সম্পূর্ণ নিষিদ্ধ এবং তা মুছে ফেলা হবে। ব্যবহারকারীরা যেকোনো সময় আপত্তিকর মন্তব্য রিপোর্ট করতে বা অন্য ব্যবহারকারীকে ব্লক করতে পারবেন।</string>
-    <string name="terms_content_rights_title">৩. কনটেন্টের অধিকার</string>
-    <string name="terms_content_rights_body">প্রদর্শিত সকল রেফারেন্স ছবি, শিরোনাম এবং প্রম্পট PromptLens এবং সংশ্লিষ্ট নির্মাতাদের সম্পত্তি। আপনার নিজস্ব সৃজনশীল কাজের জন্য প্রম্পট কপি ও শেয়ার করা যাবে।</string>
+    <string name="terms_comments_rules_body">আলোচনা সম্মানজনক ও গঠনমূলক রাখুন। স্প্যাম, হয়রানি বা আপত্তিকর মন্তব্য কঠোরভাবে নিষিদ্ধ এবং তা মুছে ফেলা হবে।</string>
+    <string name="terms_content_rights_title">৩. কনটেন্ট অধিকার</string>
+    <string name="terms_content_rights_body">প্রদর্শিত সমস্ত ছবি, শিরোনাম এবং প্রম্পট PromptLens এবং সংশ্লিষ্ট নির্মাতাদের সম্পত্তি। আপনার নিজস্ব সৃজনশীল কাজের জন্য প্রম্পট কপি ও শেয়ার করা যাবে।</string>
 </resources>

@@ -8,19 +8,16 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
@@ -30,6 +27,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -41,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -53,6 +52,7 @@ import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.example.data.NetworkAndCacheManager
 import com.example.model.InspirationImage
+import com.example.ui.theme.HeartLikeRed
 
 @Composable
 fun rememberShimmerBrush(): Brush {
@@ -85,7 +85,7 @@ fun ShimmerSkeletonCard(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(aspectRatio)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(brush)
     )
 }
@@ -104,7 +104,7 @@ fun LumiereExternalImage(
     val imageRequest = remember(imageUrl) {
         ImageRequest.Builder(context)
             .data(imageUrl)
-            .crossfade(250)
+            .crossfade(120)
             .diskCachePolicy(CachePolicy.ENABLED)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .listener(
@@ -163,80 +163,11 @@ fun LumiereExternalImage(
 }
 
 /**
- * Clean Featured horizontal card showing image, title (1-2 lines), and like count.
- */
-@Composable
-fun FeaturedHeroCard(
-    image: InspirationImage,
-    isLiked: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier
-            .width(240.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
-            .testTag("featured_card_${image.id}"),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column {
-            LumiereExternalImage(
-                imageUrl = image.imageUrl,
-                contentDescription = image.title,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(170.dp)
-            )
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = image.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 8.dp)
-                )
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Icon(
-                        imageVector = if (isLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                        contentDescription = null,
-                        tint = if (isLiked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Text(
-                        text = formatCompactCount(image.likeCount),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * Clean 2-column staggered gallery card showing image (preserving aspectRatio),
- * title (1-2 lines), and like count.
+ * Premium uniform 2-column staggered gallery card:
+ * - Smooth 20.dp rounded corners with a subtle luminous gradient border rim
+ * - Image fills the entire card preserving aspectRatio
+ * - Cinematic bottom gradient overlay with title and frosted glass heart pill badge
+ * - Liked state: solid red heart (#FF3B5C) with red count; Not liked: outlined heart in neutral color
  */
 @Composable
 fun InspirationGalleryCard(
@@ -246,67 +177,103 @@ fun InspirationGalleryCard(
     modifier: Modifier = Modifier
 ) {
     val safeAspectRatio = image.aspectRatio.toFloat().coerceIn(0.62f, 1.35f)
+    val neutralHeartTint = Color(0xFFF1F5F9)
+    val cardShape = RoundedCornerShape(20.dp)
+
+    val rimBrush = Brush.linearGradient(
+        colors = listOf(
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
+            MaterialTheme.colorScheme.outline.copy(alpha = 0.22f),
+            MaterialTheme.colorScheme.secondary.copy(alpha = 0.30f)
+        )
+    )
 
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .aspectRatio(safeAspectRatio)
+            .clip(cardShape)
+            .border(width = 1.dp, brush = rimBrush, shape = cardShape)
             .clickable(onClick = onClick)
             .testTag("gallery_card_${image.id}"),
-        shape = RoundedCornerShape(16.dp),
+        shape = cardShape,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            LumiereExternalImage(
+                imageUrl = image.imageUrl,
+                contentDescription = image.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // Cinematic bottom gradient scrim for title overlay & frosted heart count pill
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(safeAspectRatio)
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color(0x99090718),
+                                Color(0xE6090718)
+                            )
+                        )
+                    )
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
-                LumiereExternalImage(
-                    imageUrl = image.imageUrl,
-                    contentDescription = image.title,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = image.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 8.dp)
-                )
-
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = if (isLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                        contentDescription = null,
-                        tint = if (isLiked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(14.dp)
-                    )
                     Text(
-                        text = formatCompactCount(image.likeCount),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = image.title,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp)
                     )
+
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = if (isLiked) {
+                            HeartLikeRed.copy(alpha = 0.22f)
+                        } else {
+                            Color.White.copy(alpha = 0.14f)
+                        },
+                        border = BorderStroke(
+                            0.7.dp,
+                            if (isLiked) HeartLikeRed.copy(alpha = 0.65f) else Color.White.copy(alpha = 0.24f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                                contentDescription = null,
+                                tint = if (isLiked) HeartLikeRed else neutralHeartTint,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = formatCompactCount(image.likeCount),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isLiked) HeartLikeRed else neutralHeartTint,
+                                fontWeight = if (isLiked) FontWeight.Bold else FontWeight.SemiBold
+                            )
+                        }
+                    }
                 }
             }
         }
