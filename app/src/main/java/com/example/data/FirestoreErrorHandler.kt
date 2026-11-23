@@ -32,15 +32,12 @@ fun handleFirestoreError(exception: Throwable, operationType: OperationType, pat
     val providerInfoList = currentUser?.providerData?.map { provider ->
         JSONObject().apply {
             put("providerId", provider.providerId)
-            put("email", provider.email)
         }
     } ?: emptyList()
 
     val authInfoJson = JSONObject().apply {
         put("userId", currentUser?.uid)
-        put("email", currentUser?.email)
-        put("emailVerified", currentUser?.isEmailVerified)
-        put("tenantId", currentUser?.tenantId)
+        put("isAnonymous", currentUser?.isAnonymous)
         put("providerInfo", JSONArray(providerInfoList))
     }
 

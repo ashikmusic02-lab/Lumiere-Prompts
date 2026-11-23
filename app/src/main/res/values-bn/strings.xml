@@ -5,15 +5,16 @@
     <string name="nav_home">হোম</string>
     <string name="nav_categories">ক্যাটাগরি</string>
     <string name="nav_saved">সেভড</string>
+    <string name="nav_ai_tools">এআই টুলস</string>
     <string name="nav_notifications">নোটিফিকেশন</string>
     <string name="nav_profile">প্রোফাইল</string>
 
     <!-- Connectivity & Offline -->
     <string name="offline_banner_message">ইন্টারনেট সংযোগ নেই। মোবাইল ডেটা বা ওয়াই-ফাই চালু করুন।</string>
-    <string name="turn_on_internet_message">অনুগ্রহ করে আপনার ইন্টারনেট সংযোগ চালু করুন</string>
+    <string name="turn_on_internet_message">ইন্টারনেট চালু করে আবার চেষ্টা করুন</string>
 
     <!-- Home & Search -->
-    <string name="search_placeholder">অনুপ্রেরণা খুঁজুন…</string>
+    <string name="search_placeholder">খুঁজুন</string>
     <string name="category_all">সব</string>
     <string name="empty_inspirations">এখনও কোনো অনুপ্রেরণা নেই</string>
     <string name="empty_search_results">কোনো ফলাফল পাওয়া যায়নি</string>
@@ -28,6 +29,11 @@
     <string name="sort_trending">ট্রেন্ডিং</string>
     <string name="sort_most_liked">সবচেয়ে পছন্দের</string>
 
+    <!-- AI Tools Tab -->
+    <string name="ai_tools_title">এআই টুলস</string>
+    <string name="ai_tools_search_placeholder">এআই টুলস খুঁজুন…</string>
+    <string name="empty_ai_tools">এখনও কোনো এআই টুল উপলব্ধ নেই</string>
+
     <!-- Image Detail & Prompt -->
     <string name="get_prompt_action">প্রম্পট নিন</string>
     <string name="prompt_heading">প্রম্পট</string>
@@ -39,6 +45,8 @@
     <string name="like_action">লাইক</string>
     <string name="back_action">ফিরুন</string>
     <string name="prompt_coming_soon">প্রম্পট শীঘ্রই আসছে</string>
+    <string name="prompt_generic_error">কিছু একটা সমস্যা হয়েছে। আবার চেষ্টা করুন।</string>
+    <string name="more_like_this">আরও দেখুন</string>
 
     <!-- Comments & Moderation -->
     <string name="comments_header">মন্তব্য (%1$d)</string>
@@ -66,7 +74,7 @@
     <string name="empty_saved">এখনও কোনো সেভ করা পোস্ট নেই</string>
     <string name="go_to_home">হোমে যান</string>
 
-    <!-- Notifications Tab -->
+    <!-- Notifications Screen -->
     <string name="notifications_title">নোটিফিকেশন</string>
     <string name="empty_notifications">এখনও কোনো নোটিফিকেশন নেই</string>
     <string name="post_no_longer_available">এই পোস্টটি আর উপলব্ধ নেই</string>
@@ -80,7 +88,7 @@
     <string name="sign_in_with_google">Google দিয়ে সাইন ইন করুন</string>
     <string name="signed_in_message">সাইন ইন সম্পন্ন হয়েছে</string>
     <string name="signed_out_message">সাইন আউট সম্পন্ন হয়েছে</string>
-    <string name="guest_user_title">PromptLens-এ স্বাগতম</string>
+    <string name="guest_user_title">গেস্ট</string>
     <string name="language_label">ভাষা</string>
     <string name="theme_label">থিম</string>
     <string name="theme_dark">ডার্ক</string>
@@ -94,7 +102,7 @@
     <string name="about_version_format">ভার্সন %1$s</string>
     <string name="contact_support_label">সাপোর্টে যোগাযোগ করুন</string>
     <string name="share_app_label">অ্যাপ শেয়ার করুন</string>
-    <string name="rate_app_label">অ্যাপ রেট করুন</string>
+    <string name="rate_app_label">রেট করুন</string>
     <string name="clear_image_cache_label">ইমেজ ক্যাশ পরিষ্কার করুন</string>
     <string name="image_cache_cleared">ইমেজ ক্যাশ পরিষ্কার করা হয়েছে</string>
     <string name="sign_out_label">সাইন আউট</string>

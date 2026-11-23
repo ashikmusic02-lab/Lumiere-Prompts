@@ -4,79 +4,82 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
-import com.example.BuildConfig
-import com.onesignal.OneSignal
-import com.onesignal.notifications.INotificationClickEvent
-import com.onesignal.notifications.INotificationClickListener
+import com.example.auth.GoogleSignInManager
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+/**
+ * Firebase Cloud Messaging & Deep-Link Router (Requirement E):
+ * - Subscribes to FCM topic `"all"` on app start and ensures notification channel `"general"` exists.
+ * - Handles incoming notification and deep-link intents in all 3 app states (killed, background, foreground):
+ *   - Data key `"link"` (e.g. `promptlens://image/{id}`)
+ *   - Data key `"imageId"` / `"image_id"` (plain id)
+ *   - Custom URI scheme `promptlens://image/{id}`
+ * - Zero OneSignal or ONESIGNAL_APP_ID usage.
+ */
 object OneSignalDeepLinkManager {
-    private const val TAG = "OneSignalDeepLink"
+    private const val TAG = "PromptLensMessaging"
+    private const val TOPIC_ALL = "all"
 
     private val _pendingImageDeepLink = MutableStateFlow<String?>(null)
     val pendingImageDeepLink: StateFlow<String?> = _pendingImageDeepLink.asStateFlow()
-
-    private val _isOneSignalConfigured = MutableStateFlow(false)
-    val isOneSignalConfigured: StateFlow<Boolean> = _isOneSignalConfigured.asStateFlow()
 
     @Volatile
     private var initialized = false
 
     fun initialize(context: Context) {
+        val appContext = context.applicationContext ?: context
+        PromptLensMessagingService.ensureGeneralNotificationChannel(appContext)
         if (initialized) return
-        val appId = BuildConfig.ONESIGNAL_APP_ID.trim()
-        val hasValidAppId = appId.isNotBlank() &&
-            appId != "YOUR_ONESIGNAL_APP_ID" &&
-            !appId.startsWith("REPLACE_")
-
-        _isOneSignalConfigured.value = hasValidAppId
-
-        if (!hasValidAppId) {
-            Log.i(TAG, "OneSignal App ID not yet configured in .env; deep-link intent router remains active.")
-            initialized = true
-            return
+        initialized = true
+        if (GoogleSignInManager.isFirebaseConfigured(appContext)) {
+            ensureSubscribedToAllTopic()
         }
+    }
 
+    fun ensureSubscribedToAllTopic() {
         runCatching {
-            OneSignal.initWithContext(context.applicationContext, appId)
-            OneSignal.Notifications.addClickListener(object : INotificationClickListener {
-                override fun onClick(event: INotificationClickEvent) {
-                    val data = event.notification.additionalData
-                    val imageIdFromData = data?.optString("imageId", "")
-                        ?.ifBlank { data.optString("image_id", "") }
-                        .orEmpty()
-
-                    if (imageIdFromData.isNotBlank()) {
-                        dispatchDeepLinkImageId(imageIdFromData)
-                        return
-                    }
-
-                    val launchUrl = event.result.url
-                    if (!launchUrl.isNullOrBlank()) {
-                        extractImageIdFromUri(Uri.parse(launchUrl))?.let { id ->
-                            dispatchDeepLinkImageId(id)
-                        }
+            FirebaseMessaging.getInstance().subscribeToTopic(TOPIC_ALL)
+                .addOnCompleteListener { task ->
+                    if (task.isSuccessful) {
+                        Log.d(TAG, "Subscribed to FCM topic '$TOPIC_ALL'")
+                    } else {
+                        Log.w(TAG, "FCM topic '$TOPIC_ALL' subscription warning: ${task.exception?.message}")
                     }
                 }
-            })
-            initialized = true
-            Log.d(TAG, "OneSignal initialized and click listener attached.")
         }.onFailure { e ->
-            Log.w(TAG, "OneSignal initialization skipped: ${e.message}")
+            Log.w(TAG, "FCM topic '$TOPIC_ALL' subscription skipped: ${e.message}")
         }
     }
 
     fun handleIncomingIntent(intent: Intent?) {
         if (intent == null) return
 
-        // 1. Check direct intent extras (from notification payload or internal deep link)
+        // 1. Check direct intent extras or FCM background notification extras ("imageId", "image_id", "link")
+        val extras = intent.extras
         val extraImageId = intent.getStringExtra("imageId")
             ?: intent.getStringExtra("image_id")
+            ?: extras?.getString("imageId")
+            ?: extras?.getString("image_id")
+
         if (!extraImageId.isNullOrBlank()) {
-            dispatchDeepLinkImageId(extraImageId)
-            return
+            val extracted = extractImageIdFromLinkString(extraImageId) ?: extraImageId.trim()
+            if (extracted.isNotBlank()) {
+                dispatchDeepLinkImageId(extracted)
+                return
+            }
+        }
+
+        val extraLink = intent.getStringExtra("link")
+            ?: extras?.getString("link")
+            ?: extras?.getString("gcm.notification.link")
+        if (!extraLink.isNullOrBlank()) {
+            extractImageIdFromLinkString(extraLink)?.let { id ->
+                dispatchDeepLinkImageId(id)
+                return
+            }
         }
 
         // 2. Check URI data (promptlens://image/{imageId})
@@ -88,10 +91,19 @@ object OneSignalDeepLinkManager {
         }
     }
 
+    fun extractImageIdFromLinkString(rawLink: String?): String? {
+        val cleaned = rawLink?.trim().orEmpty()
+        if (cleaned.isEmpty()) return null
+        if (cleaned.startsWith("promptlens://", ignoreCase = true)) {
+            return runCatching { Uri.parse(cleaned) }.getOrNull()?.let(::extractImageIdFromUri)
+        }
+        return null
+    }
+
     fun extractImageIdFromUri(uri: Uri): String? {
         val scheme = uri.scheme?.lowercase() ?: return null
         // Never redirect to or accept arbitrary untrusted websites
-        if (scheme == "promptlens" && uri.host == "image") {
+        if (scheme == "promptlens" && uri.host?.lowercase() == "image") {
             return uri.lastPathSegment?.takeIf { it.isNotBlank() }
                 ?: uri.getQueryParameter("id")
         }

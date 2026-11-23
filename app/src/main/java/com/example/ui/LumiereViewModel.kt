@@ -12,9 +12,11 @@ import com.example.auth.GoogleSignInManager
 import com.example.data.LocalPreferencesRepository
 import com.example.data.LumiereRepository
 import com.example.data.NetworkAndCacheManager
+import com.example.data.PostDeletedException
 import com.example.data.PromptComingSoonException
 import com.example.data.ReauthRequiredForDeleteException
 import com.example.model.AdvertisementSettings
+import com.example.model.AiToolItem
 import com.example.model.AppConfigSettings
 import com.example.model.AppNotification
 import com.example.model.CategoryItem
@@ -41,6 +43,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -122,6 +125,9 @@ class LumiereViewModel(
     private val _categoriesState = MutableStateFlow<List<CategoryItem>>(emptyList())
     val categoriesState: StateFlow<List<CategoryItem>> = _categoriesState.asStateFlow()
 
+    private val _aiToolsState = MutableStateFlow<List<AiToolItem>>(emptyList())
+    val aiToolsState: StateFlow<List<AiToolItem>> = _aiToolsState.asStateFlow()
+
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
@@ -164,9 +170,12 @@ class LumiereViewModel(
     // USER LIKES & SAVED FAVORITES
     // =========================================================================
 
-    private val firestoreLikesState: StateFlow<Set<String>> = _currentUserId
-        .flatMapLatest { uid ->
-            if (repository != null && !uid.isNullOrBlank()) {
+    private val firestoreLikesState: StateFlow<Set<String>> = combine(
+        _currentUserId,
+        _isRealUser
+    ) { uid, isReal -> uid to isReal }
+        .flatMapLatest { (uid, isReal) ->
+            if (repository != null && isReal && !uid.isNullOrBlank()) {
                 repository.observeUserLikes(uid)
                     .map { list -> list.map(LikeRecord::imageId).toSet() }
                     .catch { emit(emptySet()) }
@@ -176,9 +185,12 @@ class LumiereViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
-    private val firestoreFavoritesListState: StateFlow<List<FavoriteRecord>> = _currentUserId
-        .flatMapLatest { uid ->
-            if (repository != null && !uid.isNullOrBlank()) {
+    private val firestoreFavoritesListState: StateFlow<List<FavoriteRecord>> = combine(
+        _currentUserId,
+        _isRealUser
+    ) { uid, isReal -> uid to isReal }
+        .flatMapLatest { (uid, isReal) ->
+            if (repository != null && isReal && !uid.isNullOrBlank()) {
                 repository.observeUserFavorites(uid)
                     .catch { emit(emptyList()) }
             } else {
@@ -189,9 +201,12 @@ class LumiereViewModel(
 
     val likedImageIds: StateFlow<Set<String>> = firestoreLikesState
 
-    val favoritedImageIds: StateFlow<Set<String>> = firestoreFavoritesListState
-        .map { list -> list.map(FavoriteRecord::imageId).toSet() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+    val favoritedImageIds: StateFlow<Set<String>> = combine(
+        firestoreFavoritesListState,
+        localPrefs.localFavoriteImageIds
+    ) { firestoreList, localSet ->
+        firestoreList.map(FavoriteRecord::imageId).toSet() + localSet
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     // =========================================================================
     // MERGED NOTIFICATIONS & UNREAD DOT
@@ -307,7 +322,6 @@ class LumiereViewModel(
         AdvertisementSettings.defaultWhenDocumentMissing()
     )
     val advertisementSettings: StateFlow<AdvertisementSettings> = _advertisementSettings.asStateFlow()
-    private var initialAdSettingsLockedForSession = false
 
     val themePreference: StateFlow<ThemePreference> = localPrefs.themePreference
         .stateIn(
@@ -339,6 +353,7 @@ class LumiereViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             var cachedImgs = localPrefs.loadCachedImages()
             var cachedCats = localPrefs.loadCachedCategories()
+            var cachedTools = localPrefs.loadCachedAiTools()
 
             // If DataStore JSON cache is empty, also check Firestore local disk cache (fast, local-only)
             if (cachedImgs.isEmpty() && repository != null) {
@@ -351,9 +366,17 @@ class LumiereViewModel(
                     repository.fetchAllPublishedCategories(Source.CACHE).getOrNull()
                 }.orEmpty()
             }
+            if (cachedTools.isEmpty() && repository != null) {
+                cachedTools = withTimeoutOrNull(250L) {
+                    repository.fetchAllEnabledAiTools(Source.CACHE).getOrNull()
+                }.orEmpty()
+            }
 
             if (cachedCats.isNotEmpty()) {
                 _categoriesState.value = cachedCats.sortedBy { it.sortOrder }
+            }
+            if (cachedTools.isNotEmpty()) {
+                _aiToolsState.value = cachedTools.sortedBy { it.sortOrder }
             }
             if (cachedImgs.isNotEmpty()) {
                 _imagesUiState.value = UiState.Success(sortNewestFirst(cachedImgs))
@@ -389,17 +412,30 @@ class LumiereViewModel(
             }
         }
 
-        // 3. Realtime listener on advertisementSettings/global
+        // 2b. Listen to aiTools realtime stream and persist to local cache
+        viewModelScope.launch {
+            _currentUserId.flatMapLatest {
+                repository?.observeEnabledAiTools()
+                    ?.catch { emit(emptyList()) }
+                    ?: flowOf(emptyList())
+            }.collect { liveTools ->
+                if (liveTools.isNotEmpty() || isOnline.value) {
+                    _aiToolsState.value = liveTools
+                    withContext(Dispatchers.IO) {
+                        localPrefs.saveCachedAiTools(liveTools)
+                    }
+                }
+            }
+        }
+
+        // 3. Realtime listener on advertisementSettings/global (applies every live update immediately)
         viewModelScope.launch {
             _currentUserId.flatMapLatest {
                 repository?.observeAdvertisementSettings()
                     ?.catch { emit(AdvertisementSettings.defaultWhenDocumentMissing()) }
                     ?: flowOf(AdvertisementSettings.defaultWhenDocumentMissing())
             }.collect { latestSettings ->
-                if (!initialAdSettingsLockedForSession) {
-                    _advertisementSettings.value = latestSettings
-                    initialAdSettingsLockedForSession = true
-                }
+                _advertisementSettings.value = latestSettings
             }
         }
 
@@ -448,11 +484,13 @@ class LumiereViewModel(
     }
 
     /**
-     * Silently syncs in the background when the Home tab is tapped.
+     * Silently syncs in the background when the Home tab is tapped or Retry is pressed.
      */
     fun onHomeTabSelected() {
         if (isOnline.value) {
             syncAndReconcileCatalog(force = true, showRefreshIndicator = false)
+        } else if (_imagesUiState.value is UiState.Error) {
+            emitOfflineMessage()
         }
     }
 
@@ -479,7 +517,10 @@ class LumiereViewModel(
                 if (cachedCategories.isNotEmpty()) {
                     _categoriesState.value = cachedCategories
                 }
-                if (_imagesUiState.value !is UiState.Success) {
+                val existing = (_imagesUiState.value as? UiState.Success)?.data.orEmpty()
+                if (existing.isEmpty() && cachedImages.isEmpty()) {
+                    _imagesUiState.value = UiState.Error(appContext.getString(R.string.turn_on_internet_message))
+                } else if (_imagesUiState.value !is UiState.Success) {
                     _imagesUiState.value = UiState.Success(sortNewestFirst(cachedImages))
                 }
                 _isRefreshing.value = false
@@ -520,6 +561,14 @@ class LumiereViewModel(
                 repository.fetchAllPublishedCategories(Source.SERVER)
             }
 
+            val aiToolsResult = withTimeoutOrNull(SYNC_TIMEOUT_MS) {
+                repository.fetchAllEnabledAiTools(Source.SERVER)
+            }
+            aiToolsResult?.getOrNull()?.let { freshTools ->
+                _aiToolsState.value = freshTools
+                localPrefs.saveCachedAiTools(freshTools)
+            }
+
             imagesResult.fold(
                 onSuccess = { freshImages ->
                     val sortedFresh = sortNewestFirst(freshImages)
@@ -546,7 +595,11 @@ class LumiereViewModel(
                 },
                 onFailure = {
                     val fallback = existingDisplayed.ifEmpty { cachedImages }
-                    _imagesUiState.value = UiState.Success(sortNewestFirst(fallback))
+                    if (fallback.isNotEmpty()) {
+                        _imagesUiState.value = UiState.Success(sortNewestFirst(fallback))
+                    } else {
+                        _imagesUiState.value = UiState.Error(appContext.getString(R.string.turn_on_internet_message))
+                    }
                 }
             )
             if (showRefreshIndicator || _isRefreshing.value) {
@@ -608,20 +661,16 @@ class LumiereViewModel(
 
     /**
      * Reveals the prompt for the current detail visit:
-     * Ensures `promptUnlocks/{uid}_{imageId}` exists, then reads `imagePrompts/{imageId}`
-     * into memory-only state [_activeDetailPromptText].
-     * If the prompt does not exist for this image, sets [_isPromptComingSoon] to true
-     * so the UI shows "Prompt coming soon"; for network problems shows "Turn on internet and try again".
+     * Never blocks with a pre-flight offline check; tries `ensureUnlockAndReadPrompt` directly.
+     * - Missing prompt -> "Prompt coming soon"
+     * - Real network failure -> "Turn on internet and try again"
+     * - Any other error -> "Something went wrong. Please try again."
      */
     fun unlockAndLoadPromptForCurrentVisit(image: InspirationImage, adNetwork: String) {
-        if (!isOnline.value) {
+        val repo = repository ?: run {
             _isPromptComingSoon.value = false
             _activeDetailPromptText.value = null
-            emitMessage(appContext.getString(R.string.turn_on_internet_message))
-            return
-        }
-        val repo = repository ?: run {
-            _isPromptComingSoon.value = true
+            emitMessage(appContext.getString(R.string.prompt_generic_error))
             return
         }
         viewModelScope.launch {
@@ -637,15 +686,57 @@ class LumiereViewModel(
                         "unlockAndLoadPromptForCurrentVisit failed for imageId=${image.id}",
                         err
                     )
-                    if (err is PromptComingSoonException) {
-                        _isPromptComingSoon.value = true
-                    } else {
-                        _isPromptComingSoon.value = false
-                        _activeDetailPromptText.value = null
-                        emitMessage(appContext.getString(R.string.turn_on_internet_message))
+                    when {
+                        err is PostDeletedException -> {
+                            _isPromptComingSoon.value = false
+                            _activeDetailPromptText.value = null
+                            emitMessage(appContext.getString(R.string.post_no_longer_available))
+                            removeDeletedImageFromCatalog(image.id)
+                        }
+                        err is PromptComingSoonException -> {
+                            _isPromptComingSoon.value = true
+                        }
+                        isNetworkOrTimeoutError(err) -> {
+                            _isPromptComingSoon.value = false
+                            _activeDetailPromptText.value = null
+                            emitMessage(appContext.getString(R.string.turn_on_internet_message))
+                        }
+                        else -> {
+                            _isPromptComingSoon.value = false
+                            _activeDetailPromptText.value = null
+                            emitMessage(appContext.getString(R.string.prompt_generic_error))
+                        }
                     }
                 }
             )
+        }
+    }
+
+    private fun removeDeletedImageFromCatalog(deletedImageId: String) {
+        val current = (_imagesUiState.value as? UiState.Success)?.data ?: return
+        val updated = current.filterNot { it.id == deletedImageId }
+        _imagesUiState.value = UiState.Success(updated)
+        viewModelScope.launch(Dispatchers.IO) {
+            localPrefs.reconcileAndSaveCatalog(
+                freshImages = updated,
+                freshCategories = _categoriesState.value
+            )
+        }
+    }
+
+    private fun isNetworkOrTimeoutError(error: Throwable): Boolean {
+        val chain = generateSequence(error) { it.cause }.toList()
+        return chain.any { cause ->
+            when (cause) {
+                is kotlinx.coroutines.TimeoutCancellationException,
+                is java.io.IOException,
+                is com.google.firebase.FirebaseNetworkException -> true
+                is com.google.firebase.firestore.FirebaseFirestoreException -> {
+                    cause.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.UNAVAILABLE ||
+                        cause.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.DEADLINE_EXCEEDED
+                }
+                else -> false
+            }
         }
     }
 
@@ -684,16 +775,17 @@ class LumiereViewModel(
     }
 
     fun toggleFavorite(image: InspirationImage) {
-        if (!isOnline.value) {
-            emitOfflineMessage()
-            return
-        }
-        val repo = repository ?: return
         val currentlyFavorited = favoritedImageIds.value.contains(image.id)
+        val newFavorited = !currentlyFavorited
         viewModelScope.launch {
-            val result = repo.toggleFavorite(image, currentlyFavorited)
-            result.onFailure {
-                emitMessage(appContext.getString(R.string.error_loading_content))
+            localPrefs.setLocalFavorite(image.id, newFavorited)
+            val currentUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+            if (GoogleSignInManager.isRealAuthenticatedUser(currentUser) && isOnline.value) {
+                val repo = repository ?: return@launch
+                val result = repo.toggleFavorite(image, currentlyFavorited)
+                result.onFailure {
+                    emitMessage(appContext.getString(R.string.error_loading_content))
+                }
             }
         }
     }
@@ -840,6 +932,34 @@ class LumiereViewModel(
         return repository?.fetchImageById(cleaned)?.getOrNull()
     }
 
+    fun onUserSignedIn() {
+        val repo = repository ?: return
+        val currentUser = runCatching { Firebase.auth.currentUser }.getOrNull() ?: return
+        if (!GoogleSignInManager.isRealAuthenticatedUser(currentUser)) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repo.ensureUserProfile(currentUser) }
+            val guestFavIds = runCatching { localPrefs.localFavoriteImageIds.first() }.getOrDefault(emptySet())
+            if (guestFavIds.isNotEmpty()) {
+                val catalog = (_imagesUiState.value as? UiState.Success)?.data
+                    ?.associateBy { it.id }
+                    .orEmpty()
+                val alreadyInFirestore = firestoreFavoritesListState.value.map { it.imageId }.toSet()
+                guestFavIds.forEach { imgId ->
+                    val img = catalog[imgId]
+                    if (img != null && imgId !in alreadyInFirestore) {
+                        runCatching { repo.toggleFavorite(img, currentlyFavorited = false) }
+                    }
+                }
+            }
+        }
+    }
+
+    fun onUserSignedOut() {
+        viewModelScope.launch(Dispatchers.IO) {
+            localPrefs.clearLocalFavorites()
+        }
+    }
+
     fun deleteCurrentAccount(
         onSuccess: () -> Unit,
         onReauthRequired: () -> Unit
@@ -853,6 +973,9 @@ class LumiereViewModel(
             val result = repo.deleteUserAccountAndData()
             result.fold(
                 onSuccess = {
+                    withContext(Dispatchers.IO) {
+                        localPrefs.clearLocalFavorites()
+                    }
                     emitMessage(appContext.getString(R.string.account_deleted_message))
                     onSuccess()
                 },

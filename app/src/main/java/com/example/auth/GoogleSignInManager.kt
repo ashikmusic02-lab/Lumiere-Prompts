@@ -2,12 +2,14 @@ package com.example.auth
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialInterruptedException
 import androidx.credentials.exceptions.NoCredentialException
 import com.example.R
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
@@ -15,6 +17,7 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
@@ -22,6 +25,7 @@ import com.google.firebase.auth.FirebaseAuthUserCollisionException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -36,6 +40,15 @@ import kotlinx.coroutines.withTimeoutOrNull
 object GoogleSignInManager {
     private const val TAG = "Auth"
     private const val ANONYMOUS_AUTH_TIMEOUT_MS = 6_000L
+
+    private fun findActivity(context: Context): Activity? {
+        var current: Context? = context
+        while (current is ContextWrapper) {
+            if (current is Activity) return current
+            current = current.baseContext
+        }
+        return current as? Activity
+    }
 
     fun isFirebaseConfigured(context: Context): Boolean {
         return runCatching {
@@ -132,13 +145,13 @@ object GoogleSignInManager {
         onAuthCancelled: () -> Unit = {}
     ) {
         if (!isFirebaseConfigured(context) || !isWebClientIdConfigured(context)) {
-            onAuthCancelled()
+            onAuthError(context.getString(R.string.prompt_generic_error))
             return
         }
         val clientId = try {
             context.getString(R.string.default_web_client_id)
         } catch (_: Exception) {
-            onAuthCancelled()
+            onAuthError(context.getString(R.string.prompt_generic_error))
             return
         }
         val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
@@ -147,7 +160,7 @@ object GoogleSignInManager {
             .build()
         scope.launch {
             try {
-                val activity = context as? Activity
+                val activity = findActivity(context)
                     ?: throw IllegalStateException("Activity context required for interactive Google Sign-In")
                 val cred = credentialManager.getCredential(activity, request).credential
                 if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
@@ -160,16 +173,26 @@ object GoogleSignInManager {
             } catch (_: GetCredentialCancellationException) {
                 // User cancelled the sign-in sheet: return silently without any error message
                 onAuthCancelled()
-            } catch (_: NoCredentialException) {
+            } catch (_: GetCredentialInterruptedException) {
                 onAuthCancelled()
+            } catch (e: NoCredentialException) {
+                Log.w(TAG, "No Google account available on device: ${e.message}")
+                onAuthError(context.getString(R.string.sign_in_required_body))
             } catch (e: Exception) {
-                // If user dismissed or cancelled via any message containing cancel, ignore silently
                 val msg = e.message.orEmpty().lowercase()
-                if (msg.contains("cancel") || msg.contains("dismiss") || msg.contains("user")) {
+                if (msg.contains("cancel") || msg.contains("dismiss") || msg.contains("user_canceled")) {
                     onAuthCancelled()
                 } else {
                     Log.e(TAG, "Google Sign-In failed", e)
-                    onAuthError(e.localizedMessage ?: "Sign in failed")
+                    val isNetworkError = generateSequence<Throwable>(e) { it.cause }.any { cause ->
+                        cause is FirebaseNetworkException || cause is IOException
+                    } || msg.contains("network") || msg.contains("timeout") || msg.contains("unavailable")
+                    val friendlyMsg = if (isNetworkError) {
+                        context.getString(R.string.turn_on_internet_message)
+                    } else {
+                        context.getString(R.string.prompt_generic_error)
+                    }
+                    onAuthError(friendlyMsg)
                 }
             }
         }

@@ -9,11 +9,12 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -32,15 +34,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.CleaningServices
-import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.PrivacyTip
@@ -50,9 +53,8 @@ import androidx.compose.material.icons.outlined.NotificationsNone
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +70,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -77,6 +81,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.BuildConfig
 import com.example.R
@@ -86,17 +91,36 @@ import com.example.model.AppLinks
 import com.example.model.MergedNotificationItem
 import com.example.model.ThemePreference
 import com.example.ui.components.LumiereExternalImage
+import com.example.ui.components.openInAppCustomTab
+import com.example.ui.components.pressScaleClickable
+import com.example.ui.theme.AccentBlue
+import com.example.ui.theme.AccentViolet
+import com.example.ui.theme.BadgeAmberOrange
+import com.example.ui.theme.BadgeElectricBlue
+import com.example.ui.theme.BadgeEmeraldGreen
+import com.example.ui.theme.BadgeShieldGreen
+import com.example.ui.theme.BadgeSkyBlue
+import com.example.ui.theme.BadgeTealCyan
+import com.example.ui.theme.BadgeVioletPurple
+import com.example.ui.theme.IndigoInnerBox
+import com.example.ui.theme.IndigoSoftBorder
+import com.example.ui.theme.IndigoSurfaceBottom
+import com.example.ui.theme.IndigoSurfaceTop
+import com.example.ui.theme.PromptAccentGradientBrush
+import com.example.ui.theme.PromptCardSurfaceBrush
+import com.example.ui.theme.TextLavenderGray
+import com.example.ui.theme.TextLavenderMuted
+import com.example.ui.theme.TextPureWhite
 import com.google.firebase.auth.FirebaseUser
 import kotlin.math.max
 
 /**
- * NOTIFICATIONS SCREEN (Requirement 9):
- * - Title "Notifications". No developer text, no test button.
- * - Shows a single merged list sorted newest first:
- *   (a) Broadcast notifications: thumbnail from imageUrl, title, body, time ago.
- *   (b) Comment replies: small post thumbnail + post title on top, the user's own comment text,
- *       then the reply below it ("Reply from PromptLens").
- * - Tapping any card opens that post's detail screen inside the app (if post is gone, shows Toast).
+ * NOTIFICATIONS SCREEN (Requirement 8):
+ * - Opened from the Home top-right bell and from Profile.
+ * - Slim floating top bar with a 40dp round back button and "Notifications" title.
+ * - 28dp rounded cards: small rounded post thumbnail on the left, title, short body and time on the right;
+ *   comment replies show the user's comment and the admin reply in a slightly highlighted rounded block.
+ * - Tapping opens the post inside the app.
  */
 @Composable
 fun NotificationsScreen(
@@ -105,9 +129,14 @@ fun NotificationsScreen(
     onMarkNotificationPermissionAsked: () -> Unit,
     onNotificationsTabOpened: () -> Unit,
     onOpenPostFromNotification: (String) -> Unit,
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+
+    if (onBack != null) {
+        BackHandler(onBack = onBack)
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -137,45 +166,105 @@ fun NotificationsScreen(
             .padding(horizontal = 16.dp)
             .testTag("notifications_screen_container")
     ) {
-        Spacer(modifier = Modifier.height(14.dp))
-        Text(
-            text = stringResource(R.string.notifications_title),
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Slim floating top bar with round 40dp back button + Notifications title
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .background(PromptCardSurfaceBrush)
+                .border(1.dp, IndigoSoftBorder, RoundedCornerShape(20.dp))
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (onBack != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(IndigoInnerBox)
+                            .border(1.dp, IndigoSoftBorder, CircleShape)
+                            .pressScaleClickable(onClick = onBack)
+                            .testTag("notifications_back_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.back_action),
+                            tint = TextPureWhite,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Text(
+                    text = stringResource(R.string.notifications_title),
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 20.sp
+                    ),
+                    color = TextPureWhite
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         if (mergedNotifications.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(24.dp),
+                    .padding(bottom = 100.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(PromptCardSurfaceBrush)
+                        .border(1.dp, IndigoSoftBorder, RoundedCornerShape(28.dp))
+                        .padding(horizontal = 24.dp, vertical = 44.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.NotificationsNone,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                        modifier = Modifier.size(48.dp)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = stringResource(R.string.empty_notifications),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(AccentViolet.copy(alpha = 0.16f))
+                                .border(1.dp, IndigoSoftBorder, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.NotificationsNone,
+                                contentDescription = null,
+                                tint = TextLavenderGray,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                        Text(
+                            text = stringResource(R.string.empty_notifications),
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            color = TextLavenderGray,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
         } else {
             LazyColumn(
-                contentPadding = PaddingValues(bottom = 28.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 112.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
                 modifier = Modifier
                     .fillMaxSize()
                     .testTag("notifications_list")
@@ -217,23 +306,25 @@ private fun BroadcastNotificationCard(
     val notif = item.notification
     val timeAgo = rememberRelativeTimeText(item.timestampMs)
 
-    Card(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .testTag("notification_broadcast_${notif.id}"),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+            .shadow(
+                elevation = 8.dp,
+                shape = RoundedCornerShape(28.dp),
+                ambientColor = AccentViolet.copy(alpha = 0.18f),
+                spotColor = AccentBlue.copy(alpha = 0.2f)
+            )
+            .clip(RoundedCornerShape(28.dp))
+            .background(PromptCardSurfaceBrush)
+            .border(1.dp, IndigoSoftBorder, RoundedCornerShape(28.dp))
+            .pressScaleClickable(onClick = onClick)
+            .padding(16.dp)
+            .testTag("notification_broadcast_${notif.id}")
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (notif.imageUrl.isNotBlank()) {
@@ -242,14 +333,31 @@ private fun BroadcastNotificationCard(
                     contentDescription = notif.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(62.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .border(1.dp, IndigoSoftBorder, RoundedCornerShape(18.dp))
                 )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(AccentViolet.copy(alpha = 0.18f))
+                        .border(1.dp, IndigoSoftBorder, RoundedCornerShape(18.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = null,
+                        tint = TextPureWhite,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
             }
 
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -258,9 +366,11 @@ private fun BroadcastNotificationCard(
                 ) {
                     Text(
                         text = notif.title,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp
+                        ),
+                        color = TextPureWhite,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
@@ -270,7 +380,7 @@ private fun BroadcastNotificationCard(
                     Text(
                         text = timeAgo,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = TextLavenderMuted
                     )
                 }
 
@@ -278,7 +388,7 @@ private fun BroadcastNotificationCard(
                     Text(
                         text = notif.body,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = TextLavenderGray,
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -296,29 +406,31 @@ private fun CommentReplyNotificationCard(
     val comment = item.comment
     val timeAgo = rememberRelativeTimeText(item.timestampMs)
 
-    Card(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .testTag("notification_reply_${comment.id}"),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+            .shadow(
+                elevation = 8.dp,
+                shape = RoundedCornerShape(28.dp),
+                ambientColor = AccentViolet.copy(alpha = 0.18f),
+                spotColor = AccentBlue.copy(alpha = 0.2f)
+            )
+            .clip(RoundedCornerShape(28.dp))
+            .background(PromptCardSurfaceBrush)
+            .border(1.dp, IndigoSoftBorder, RoundedCornerShape(28.dp))
+            .pressScaleClickable(onClick = onClick)
+            .padding(16.dp)
+            .testTag("notification_reply_${comment.id}")
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Top row: Small post thumbnail + post title + time ago
+            // Top row: Small rounded post thumbnail + post title + time ago
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (item.postThumbnailUrl.isNotBlank()) {
                     LumiereExternalImage(
@@ -326,15 +438,18 @@ private fun CommentReplyNotificationCard(
                         contentDescription = item.postTitle,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .size(42.dp)
-                            .clip(RoundedCornerShape(10.dp))
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .border(1.dp, IndigoSoftBorder, RoundedCornerShape(14.dp))
                     )
                 }
                 Text(
                     text = item.postTitle.ifBlank { stringResource(R.string.app_name) },
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp
+                    ),
+                    color = TextPureWhite,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
@@ -342,7 +457,7 @@ private fun CommentReplyNotificationCard(
                 Text(
                     text = timeAgo,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = TextLavenderMuted
                 )
             }
 
@@ -350,32 +465,33 @@ private fun CommentReplyNotificationCard(
             Text(
                 text = comment.text,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = TextLavenderGray,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
 
-            // Reply from PromptLens below it
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-                modifier = Modifier.fillMaxWidth()
+            // Admin reply in a slightly highlighted rounded block
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(AccentViolet.copy(alpha = 0.16f))
+                    .border(1.dp, AccentViolet.copy(alpha = 0.45f), RoundedCornerShape(18.dp))
+                    .padding(12.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         text = stringResource(R.string.reply_from_promptlens),
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = TextLavenderGray,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
                         text = comment.adminReply,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = TextPureWhite
                     )
                 }
             }
@@ -399,22 +515,11 @@ private fun rememberRelativeTimeText(timestampMs: Long): String {
 }
 
 /**
- * PROFILE SCREEN (Requirement 10):
- * Simple list, no counters, no SHA/package card:
- * - Header: avatar, name, email (or "Sign in with Google" button if guest).
- * - Language (English / বাংলা)
- * - Theme (Dark / Light / System)
- * - Notification settings
- * - Ad privacy settings (only when UMP says required)
- * - Privacy Policy (only when AppLinks.PRIVACY_POLICY_URL is non-empty)
- * - Terms of Use (in-app dialog/page)
- * - About (app name + version)
- * - Contact support (mailto:farhadvarietiesstore@gmail.com)
- * - Share app
- * - Rate app
- * - Clear image cache
- * - Sign out (when signed in)
- * - Delete account (small red text at bottom with confirmation dialog)
+ * PROFILE SCREEN (Requirement 9):
+ * - Top card (28dp rounded): round avatar, name (or "Guest"), and a "Sign in with Google" pill button when not signed in.
+ * - Below, grouped rounded list cards (28dp) with colored circular icon badges and chevrons, rows 64dp high:
+ *   Notifications, Language, Share app, Rate us, Privacy policy, Terms of use, About.
+ *   Default language English; other languages selectable here.
  */
 @Composable
 fun ProfileScreen(
@@ -429,11 +534,13 @@ fun ProfileScreen(
     onSignInClick: () -> Unit,
     onSignOutClick: () -> Unit,
     onDeleteAccountClick: () -> Unit,
+    onOpenNotifications: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val isSignedInWithGoogle = firebaseUser != null && !firebaseUser.isAnonymous
 
+    var showLanguageDialog by remember { mutableStateOf(false) }
     var showTermsDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
@@ -442,10 +549,106 @@ fun ProfileScreen(
     val playStoreUrl = appConfigSettings.playStoreUrl.ifBlank {
         BuildConfig.OFFICIAL_PLAY_STORE_URL
     }
+    val isBangla = languageTag.startsWith("bn", ignoreCase = true)
+
+    if (showLanguageDialog) {
+        AlertDialog(
+            onDismissRequest = { showLanguageDialog = false },
+            containerColor = IndigoSurfaceTop,
+            titleContentColor = TextPureWhite,
+            textContentColor = TextLavenderGray,
+            shape = RoundedCornerShape(28.dp),
+            title = {
+                Text(
+                    text = stringResource(R.string.language_label),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        FilterChip(
+                            selected = !isBangla,
+                            onClick = {
+                                onLanguageChange("en")
+                                showLanguageDialog = false
+                            },
+                            label = {
+                                Text(
+                                    text = stringResource(R.string.language_english),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 6.dp),
+                                    textAlign = TextAlign.Center,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            },
+                            shape = RoundedCornerShape(50),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AccentViolet,
+                                selectedLabelColor = TextPureWhite,
+                                containerColor = IndigoInnerBox,
+                                labelColor = TextLavenderGray
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("language_chip_en")
+                        )
+                        FilterChip(
+                            selected = isBangla,
+                            onClick = {
+                                onLanguageChange("bn")
+                                showLanguageDialog = false
+                            },
+                            label = {
+                                Text(
+                                    text = stringResource(R.string.language_bangla),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 6.dp),
+                                    textAlign = TextAlign.Center,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            },
+                            shape = RoundedCornerShape(50),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AccentViolet,
+                                selectedLabelColor = TextPureWhite,
+                                containerColor = IndigoInnerBox,
+                                labelColor = TextLavenderGray
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("language_chip_bn")
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLanguageDialog = false }) {
+                    Text(
+                        text = stringResource(R.string.cancel_action),
+                        color = TextLavenderGray
+                    )
+                }
+            }
+        )
+    }
 
     if (showTermsDialog) {
         AlertDialog(
             onDismissRequest = { showTermsDialog = false },
+            containerColor = IndigoSurfaceTop,
+            titleContentColor = TextPureWhite,
+            textContentColor = TextLavenderGray,
+            shape = RoundedCornerShape(28.dp),
             title = {
                 Text(
                     text = stringResource(R.string.terms_of_use_label),
@@ -462,40 +665,43 @@ fun ProfileScreen(
                         text = stringResource(R.string.terms_acceptable_use_title),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = TextPureWhite
                     )
                     Text(
                         text = stringResource(R.string.terms_acceptable_use_body),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = TextLavenderGray
                     )
                     Text(
                         text = stringResource(R.string.terms_comments_rules_title),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = TextPureWhite
                     )
                     Text(
                         text = stringResource(R.string.terms_comments_rules_body),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = TextLavenderGray
                     )
                     Text(
                         text = stringResource(R.string.terms_content_rights_title),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = TextPureWhite
                     )
                     Text(
                         text = stringResource(R.string.terms_content_rights_body),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = TextLavenderGray
                     )
                 }
             },
             confirmButton = {
                 TextButton(onClick = { showTermsDialog = false }) {
-                    Text(text = stringResource(R.string.back_action))
+                    Text(
+                        text = stringResource(R.string.back_action),
+                        color = TextPureWhite
+                    )
                 }
             }
         )
@@ -504,6 +710,10 @@ fun ProfileScreen(
     if (showAboutDialog) {
         AlertDialog(
             onDismissRequest = { showAboutDialog = false },
+            containerColor = IndigoSurfaceTop,
+            titleContentColor = TextPureWhite,
+            textContentColor = TextLavenderGray,
+            shape = RoundedCornerShape(28.dp),
             title = {
                 Text(
                     text = stringResource(R.string.app_name),
@@ -515,12 +725,15 @@ fun ProfileScreen(
                 Text(
                     text = stringResource(R.string.about_version_format, BuildConfig.VERSION_NAME),
                     style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = TextLavenderGray
                 )
             },
             confirmButton = {
                 TextButton(onClick = { showAboutDialog = false }) {
-                    Text(text = stringResource(R.string.back_action))
+                    Text(
+                        text = stringResource(R.string.back_action),
+                        color = TextPureWhite
+                    )
                 }
             }
         )
@@ -529,6 +742,10 @@ fun ProfileScreen(
     if (showDeleteConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirmDialog = false },
+            containerColor = IndigoSurfaceTop,
+            titleContentColor = TextPureWhite,
+            textContentColor = TextLavenderGray,
+            shape = RoundedCornerShape(28.dp),
             title = {
                 Text(
                     text = stringResource(R.string.delete_account_confirm_title),
@@ -540,7 +757,7 @@ fun ProfileScreen(
                 Text(
                     text = stringResource(R.string.delete_account_confirm_body),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = TextLavenderGray
                 )
             },
             confirmButton = {
@@ -549,6 +766,7 @@ fun ProfileScreen(
                         showDeleteConfirmDialog = false
                         onDeleteAccountClick()
                     },
+                    shape = RoundedCornerShape(50),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                         contentColor = MaterialTheme.colorScheme.onError
@@ -560,7 +778,10 @@ fun ProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteConfirmDialog = false }) {
-                    Text(text = stringResource(R.string.cancel_action))
+                    Text(
+                        text = stringResource(R.string.cancel_action),
+                        color = TextLavenderGray
+                    )
                 }
             }
         )
@@ -570,356 +791,192 @@ fun ProfileScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .padding(horizontal = 16.dp)
             .testTag("profile_screen_container"),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        Spacer(modifier = Modifier.height(6.dp))
+
         Text(
             text = stringResource(R.string.profile_title),
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontWeight = FontWeight.Bold
+            style = MaterialTheme.typography.headlineSmall.copy(
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 23.sp
+            ),
+            color = TextPureWhite
         )
 
-        // 1. Header Card: Avatar, Name, Email OR "Sign in with Google" button if guest
-        Card(
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            ),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-            modifier = Modifier.fillMaxWidth()
+        // 1. Top Card (28dp rounded): Round avatar, name (or "Guest"), and a "Sign in with Google" pill button when not signed in
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .shadow(
+                    elevation = 10.dp,
+                    shape = RoundedCornerShape(28.dp),
+                    ambientColor = AccentViolet.copy(alpha = 0.2f),
+                    spotColor = AccentBlue.copy(alpha = 0.22f)
+                )
+                .clip(RoundedCornerShape(28.dp))
+                .background(PromptCardSurfaceBrush)
+                .border(1.dp, IndigoSoftBorder, RoundedCornerShape(28.dp))
+                .padding(horizontal = 24.dp, vertical = 24.dp)
         ) {
-            if (isSignedInWithGoogle && firebaseUser != null) {
-                val photoUrl = firebaseUser.photoUrl?.toString().orEmpty()
-                val displayName = firebaseUser.displayName.orEmpty().ifBlank { appName }
-                val email = firebaseUser.email.orEmpty()
+            val photoUrl = if (isSignedInWithGoogle) firebaseUser?.photoUrl?.toString().orEmpty() else ""
+            val displayName = if (isSignedInWithGoogle) {
+                firebaseUser?.displayName.orEmpty().ifBlank { appName }
+            } else {
+                stringResource(R.string.guest_user_title)
+            }
+            val email = if (isSignedInWithGoogle) firebaseUser?.email.orEmpty() else ""
 
-                Row(
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Round avatar with glowing accent ring
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        .size(88.dp)
+                        .clip(CircleShape)
+                        .background(PromptAccentGradientBrush)
+                        .padding(3.dp)
+                        .clip(CircleShape)
+                        .background(IndigoInnerBox),
+                    contentAlignment = Alignment.Center
                 ) {
                     if (photoUrl.isNotBlank()) {
                         LumiereExternalImage(
                             imageUrl = photoUrl,
                             contentDescription = displayName,
+                            contentScale = ContentScale.Crop,
                             modifier = Modifier
-                                .size(56.dp)
+                                .fillMaxSize()
                                 .clip(CircleShape)
                         )
                     } else {
-                        Box(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AccountCircle,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(36.dp)
-                            )
-                        }
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = displayName,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.Bold
+                        Icon(
+                            imageVector = Icons.Default.AccountCircle,
+                            contentDescription = displayName,
+                            tint = TextLavenderGray,
+                            modifier = Modifier.size(56.dp)
                         )
-                        if (email.isNotBlank()) {
-                            Text(
-                                text = email,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                     }
                 }
-            } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AccountCircle,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(30.dp)
-                            )
-                        }
-                        Text(
-                            text = stringResource(R.string.guest_user_title),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
 
-                    Button(
-                        onClick = onSignInClick,
-                        shape = RoundedCornerShape(14.dp),
+                Text(
+                    text = displayName,
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp
+                    ),
+                    color = TextPureWhite,
+                    textAlign = TextAlign.Center
+                )
+
+                if (email.isNotBlank()) {
+                    Text(
+                        text = email,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextLavenderGray,
+                        textAlign = TextAlign.Center
+                    )
+                }
+
+                if (!isSignedInWithGoogle) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("profile_google_sign_in_button")
+                            .height(50.dp)
+                            .shadow(
+                                elevation = 10.dp,
+                                shape = RoundedCornerShape(50),
+                                ambientColor = AccentViolet.copy(alpha = 0.4f),
+                                spotColor = AccentBlue.copy(alpha = 0.4f)
+                            )
+                            .clip(RoundedCornerShape(50))
+                            .background(PromptAccentGradientBrush)
+                            .pressScaleClickable(onClick = onSignInClick)
+                            .testTag("profile_google_sign_in_button"),
+                        contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = stringResource(R.string.sign_in_with_google),
-                            style = MaterialTheme.typography.labelLarge
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp
+                            ),
+                            color = TextPureWhite
                         )
                     }
                 }
             }
         }
 
-        // 2. Language & Theme Card
-        Card(
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            ),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-            modifier = Modifier.fillMaxWidth()
+        // 2. First Grouped Rounded Card (28dp): Notifications, Language
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .shadow(
+                    elevation = 8.dp,
+                    shape = RoundedCornerShape(28.dp),
+                    ambientColor = AccentViolet.copy(alpha = 0.16f),
+                    spotColor = AccentBlue.copy(alpha = 0.18f)
+                )
+                .clip(RoundedCornerShape(28.dp))
+                .background(PromptCardSurfaceBrush)
+                .border(1.dp, IndigoSoftBorder, RoundedCornerShape(28.dp))
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                // Language (English / বাংলা)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Language,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        text = stringResource(R.string.language_label),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
+            Column(modifier = Modifier.fillMaxWidth()) {
+                ProfileMenuRow(
+                    icon = Icons.Default.Notifications,
+                    badgeColor = BadgeEmeraldGreen,
+                    label = stringResource(R.string.notifications_title),
+                    testTag = "profile_row_notifications",
+                    onClick = onOpenNotifications
+                )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    val isBangla = languageTag.startsWith("bn", ignoreCase = true)
-                    FilterChip(
-                        selected = !isBangla,
-                        onClick = { onLanguageChange("en") },
-                        label = {
-                            Text(
-                                text = stringResource(R.string.language_english),
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = TextAlign.Center
-                            )
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("language_chip_en")
-                    )
-                    FilterChip(
-                        selected = isBangla,
-                        onClick = { onLanguageChange("bn") },
-                        label = {
-                            Text(
-                                text = stringResource(R.string.language_bangla),
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = TextAlign.Center
-                            )
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("language_chip_bn")
-                    )
-                }
+                HorizontalDivider(
+                    color = IndigoSoftBorder,
+                    thickness = 0.8.dp,
+                    modifier = Modifier.padding(horizontal = 20.dp)
+                )
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
-
-                // Theme (Dark / Light / System)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DarkMode,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        text = stringResource(R.string.theme_label),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = themePreference == ThemePreference.DARK,
-                        onClick = { onThemeChange(ThemePreference.DARK) },
-                        label = {
-                            Text(
-                                text = stringResource(R.string.theme_dark),
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = TextAlign.Center
-                            )
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("theme_chip_dark")
-                    )
-                    FilterChip(
-                        selected = themePreference == ThemePreference.LIGHT,
-                        onClick = { onThemeChange(ThemePreference.LIGHT) },
-                        label = {
-                            Text(
-                                text = stringResource(R.string.theme_light),
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = TextAlign.Center
-                            )
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("theme_chip_light")
-                    )
-                    FilterChip(
-                        selected = themePreference == ThemePreference.SYSTEM,
-                        onClick = { onThemeChange(ThemePreference.SYSTEM) },
-                        label = {
-                            Text(
-                                text = stringResource(R.string.theme_system),
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = TextAlign.Center
-                            )
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("theme_chip_system")
-                    )
-                }
+                ProfileMenuRow(
+                    icon = Icons.Default.Language,
+                    badgeColor = BadgeVioletPurple,
+                    label = stringResource(R.string.language_label),
+                    trailingText = if (isBangla) {
+                        stringResource(R.string.language_bangla)
+                    } else {
+                        stringResource(R.string.language_english)
+                    },
+                    testTag = "profile_row_language",
+                    onClick = { showLanguageDialog = true }
+                )
             }
         }
 
-        // 3. Settings & Support Rows Card
-        Card(
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            ),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-            modifier = Modifier.fillMaxWidth()
+        // 3. Second Grouped Rounded Card (28dp): Share app, Rate us, Privacy policy, Terms of use, About
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .shadow(
+                    elevation = 8.dp,
+                    shape = RoundedCornerShape(28.dp),
+                    ambientColor = AccentViolet.copy(alpha = 0.16f),
+                    spotColor = AccentBlue.copy(alpha = 0.18f)
+                )
+                .clip(RoundedCornerShape(28.dp))
+                .background(PromptCardSurfaceBrush)
+                .border(1.dp, IndigoSoftBorder, RoundedCornerShape(28.dp))
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                // Notification settings (opens system notification settings)
-                ProfileMenuRow(
-                    icon = Icons.Default.Notifications,
-                    label = stringResource(R.string.notifications_settings_label),
-                    testTag = "profile_row_notification_settings",
-                    onClick = { openSystemNotificationSettings(context) }
-                )
-
-                // Ad privacy settings (shown only when UMP says required)
-                if (isAdPrivacyOptionsRequired) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                    ProfileMenuRow(
-                        icon = Icons.Default.PrivacyTip,
-                        label = stringResource(R.string.ad_privacy_settings_label),
-                        testTag = "profile_row_ad_privacy",
-                        onClick = {
-                            findActivity(context)?.let { activity ->
-                                AdMobManager.showPrivacyOptionsForm(activity)
-                            }
-                        }
-                    )
-                }
-
-                // Privacy Policy (shown only when AppLinks.PRIVACY_POLICY_URL is non-empty)
-                if (AppLinks.PRIVACY_POLICY_URL.isNotBlank()) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                    ProfileMenuRow(
-                        icon = Icons.Default.Policy,
-                        label = stringResource(R.string.privacy_policy_label),
-                        testTag = "profile_row_privacy_policy",
-                        onClick = {
-                            openExternalUrl(context, AppLinks.PRIVACY_POLICY_URL)
-                        }
-                    )
-                }
-
-                // Terms of Use (in-app dialog)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                ProfileMenuRow(
-                    icon = Icons.Default.Description,
-                    label = stringResource(R.string.terms_of_use_label),
-                    testTag = "profile_row_terms_of_use",
-                    onClick = { showTermsDialog = true }
-                )
-
-                // About (app name + version)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                ProfileMenuRow(
-                    icon = Icons.Default.Info,
-                    label = stringResource(R.string.about_label),
-                    trailingText = BuildConfig.VERSION_NAME,
-                    testTag = "profile_row_about",
-                    onClick = { showAboutDialog = true }
-                )
-
-                // Contact support (mailto:farhadvarietiesstore@gmail.com)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                ProfileMenuRow(
-                    icon = Icons.Default.Email,
-                    label = stringResource(R.string.contact_support_label),
-                    testTag = "profile_row_contact_support",
-                    onClick = {
-                        val supportEmail = appConfigSettings.supportEmail.ifBlank {
-                            AppLinks.SUPPORT_EMAIL
-                        }
-                        openMailTo(context, supportEmail)
-                    }
-                )
-
                 // Share app
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                 ProfileMenuRow(
                     icon = Icons.Default.Share,
+                    badgeColor = BadgeElectricBlue,
                     label = stringResource(R.string.share_app_label),
                     testTag = "profile_row_share_app",
                     onClick = {
@@ -934,29 +991,97 @@ fun ProfileScreen(
                     }
                 )
 
-                // Rate app
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                HorizontalDivider(
+                    color = IndigoSoftBorder,
+                    thickness = 0.8.dp,
+                    modifier = Modifier.padding(horizontal = 20.dp)
+                )
+
+                // Rate us
                 ProfileMenuRow(
                     icon = Icons.Default.StarRate,
+                    badgeColor = BadgeAmberOrange,
                     label = stringResource(R.string.rate_app_label),
                     testTag = "profile_row_rate_app",
                     onClick = { openExternalUrl(context, playStoreUrl) }
                 )
 
-                // Clear image cache
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                ProfileMenuRow(
-                    icon = Icons.Default.CleaningServices,
-                    label = stringResource(R.string.clear_image_cache_label),
-                    testTag = "profile_row_clear_cache",
-                    onClick = onClearImageCache
+                HorizontalDivider(
+                    color = IndigoSoftBorder,
+                    thickness = 0.8.dp,
+                    modifier = Modifier.padding(horizontal = 20.dp)
                 )
 
-                // Sign out (when signed in)
+                // Privacy policy
+                ProfileMenuRow(
+                    icon = Icons.Default.Policy,
+                    badgeColor = BadgeShieldGreen,
+                    label = stringResource(R.string.privacy_policy_label),
+                    testTag = "profile_row_privacy_policy",
+                    onClick = {
+                        openInAppCustomTab(context, AppLinks.PRIVACY_POLICY_URL)
+                    }
+                )
+
+                HorizontalDivider(
+                    color = IndigoSoftBorder,
+                    thickness = 0.8.dp,
+                    modifier = Modifier.padding(horizontal = 20.dp)
+                )
+
+                // Terms of use
+                ProfileMenuRow(
+                    icon = Icons.Default.Lock,
+                    badgeColor = BadgeTealCyan,
+                    label = stringResource(R.string.terms_of_use_label),
+                    testTag = "profile_row_terms_of_use",
+                    onClick = { showTermsDialog = true }
+                )
+
+                HorizontalDivider(
+                    color = IndigoSoftBorder,
+                    thickness = 0.8.dp,
+                    modifier = Modifier.padding(horizontal = 20.dp)
+                )
+
+                // About
+                ProfileMenuRow(
+                    icon = Icons.Default.Favorite,
+                    badgeColor = BadgeSkyBlue,
+                    label = stringResource(R.string.about_label),
+                    trailingText = BuildConfig.VERSION_NAME,
+                    testTag = "profile_row_about",
+                    onClick = { showAboutDialog = true }
+                )
+
+                if (isAdPrivacyOptionsRequired) {
+                    HorizontalDivider(
+                        color = IndigoSoftBorder,
+                        thickness = 0.8.dp,
+                        modifier = Modifier.padding(horizontal = 20.dp)
+                    )
+                    ProfileMenuRow(
+                        icon = Icons.Default.PrivacyTip,
+                        badgeColor = BadgeVioletPurple,
+                        label = stringResource(R.string.ad_privacy_settings_label),
+                        testTag = "profile_row_ad_privacy",
+                        onClick = {
+                            findActivity(context)?.let { activity ->
+                                AdMobManager.showPrivacyOptionsForm(activity)
+                            }
+                        }
+                    )
+                }
+
                 if (isSignedInWithGoogle) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                    HorizontalDivider(
+                        color = IndigoSoftBorder,
+                        thickness = 0.8.dp,
+                        modifier = Modifier.padding(horizontal = 20.dp)
+                    )
                     ProfileMenuRow(
                         icon = Icons.AutoMirrored.Filled.Logout,
+                        badgeColor = BadgeAmberOrange,
                         label = stringResource(R.string.sign_out_label),
                         testTag = "profile_row_sign_out",
                         onClick = onSignOutClick
@@ -965,12 +1090,12 @@ fun ProfileScreen(
             }
         }
 
-        // 4. Delete account in small red text at the very bottom (when signed in)
+        // Delete account in small red text at the very bottom (when signed in)
         if (isSignedInWithGoogle) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 24.dp),
+                    .padding(top = 4.dp),
                 contentAlignment = Alignment.Center
             ) {
                 TextButton(
@@ -984,15 +1109,16 @@ fun ProfileScreen(
                     )
                 }
             }
-        } else {
-            Spacer(modifier = Modifier.height(20.dp))
         }
+
+        Spacer(modifier = Modifier.height(104.dp))
     }
 }
 
 @Composable
 private fun ProfileMenuRow(
     icon: ImageVector,
+    badgeColor: Color,
     label: String,
     testTag: String,
     trailingText: String? = null,
@@ -1001,76 +1127,69 @@ private fun ProfileMenuRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 15.dp)
+            .height(64.dp)
+            .pressScaleClickable(onClick = onClick)
+            .padding(horizontal = 18.dp)
             .testTag(testTag),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.weight(1f)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp)
-            )
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(badgeColor),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
             Text(
                 text = label,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 16.sp
+                ),
+                color = TextPureWhite,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (!trailingText.isNullOrBlank()) {
                 Text(
                     text = trailingText,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = TextLavenderGray
                 )
             }
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                tint = TextLavenderGray,
+                modifier = Modifier.size(22.dp)
             )
         }
     }
 }
 
-private fun openSystemNotificationSettings(context: Context) {
-    val intent = Intent().apply {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            action = Settings.ACTION_APP_NOTIFICATION_SETTINGS
-            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-        } else {
-            action = Settings.ACTION_APPLICATION_DETAILS_SETTINGS
-            data = Uri.fromParts("package", context.packageName, null)
-        }
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-    runCatching { context.startActivity(intent) }
-}
-
-private fun openExternalUrl(context: Context, url: String) {
-    if (url.isBlank()) return
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
-    runCatching { context.startActivity(intent) }
-}
-
-private fun openMailTo(context: Context, email: String) {
-    if (email.isBlank()) return
-    val intent = Intent(Intent.ACTION_SENDTO).apply {
-        data = Uri.parse("mailto:$email")
+private fun openExternalUrl(context: Context, rawUrl: String) {
+    val trimmed = rawUrl.trim()
+    if (trimmed.isEmpty()) return
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(trimmed)).apply {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     runCatching { context.startActivity(intent) }

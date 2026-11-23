@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
     <uses-permission
         android:name="android.permission.ACCESS_ADSERVICES_AD_ID"
         tools:node="remove" />
@@ -53,10 +54,21 @@
             android:name="android.webkit.WebView.MetricsOptOut"
             android:value="true" />
 
-        <!-- OneSignal Default Small Notification Icon & Accent Color -->
+        <!-- Firebase Cloud Messaging default channel ("general"), small icon & accent color -->
         <meta-data
-            android:name="com.onesignal.NotificationAccentColor.DEFAULT"
-            android:value="FF8B5CF6" />
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="general" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_onesignal_default" />
+
+        <service
+            android:name=".notifications.PromptLensMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
         <!-- AppCompat per-app language persistence service -->
         <service

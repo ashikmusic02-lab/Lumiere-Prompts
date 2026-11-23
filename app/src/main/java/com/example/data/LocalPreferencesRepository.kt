@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.model.AiToolItem
 import com.example.model.CategoryItem
 import com.example.model.InspirationImage
 import com.example.model.ThemePreference
@@ -30,9 +31,11 @@ class LocalPreferencesRepository(private val context: Context) {
     private val lastSeenNotifTsKey = longPreferencesKey("last_seen_notification_ts_ms")
     private val lastCatalogSyncTsKey = longPreferencesKey("last_catalog_sync_ts_ms")
     private val blockedUserIdsKey = stringSetPreferencesKey("blocked_user_ids")
+    private val localFavoriteIdsKey = stringSetPreferencesKey("local_favorite_image_ids")
     private val notificationPermissionAskedKey = booleanPreferencesKey("notif_permission_asked")
     private val cachedImagesJsonKey = stringPreferencesKey("cached_published_images_json")
     private val cachedCategoriesJsonKey = stringPreferencesKey("cached_published_categories_json")
+    private val cachedAiToolsJsonKey = stringPreferencesKey("cached_enabled_ai_tools_json")
 
     val themePreference: Flow<ThemePreference> = context.promptLensDataStore.data.map { prefs ->
         val raw = prefs[themeKey] ?: ThemePreference.DARK.name
@@ -49,6 +52,10 @@ class LocalPreferencesRepository(private val context: Context) {
 
     val blockedUserIds: Flow<Set<String>> = context.promptLensDataStore.data.map { prefs ->
         prefs[blockedUserIdsKey] ?: emptySet()
+    }
+
+    val localFavoriteImageIds: Flow<Set<String>> = context.promptLensDataStore.data.map { prefs ->
+        prefs[localFavoriteIdsKey] ?: emptySet()
     }
 
     val notificationPermissionAsked: Flow<Boolean> = context.promptLensDataStore.data.map { prefs ->
@@ -81,6 +88,20 @@ class LocalPreferencesRepository(private val context: Context) {
         context.promptLensDataStore.edit { prefs ->
             val current = prefs[blockedUserIdsKey] ?: emptySet()
             prefs[blockedUserIdsKey] = current + userId
+        }
+    }
+
+    suspend fun setLocalFavorite(imageId: String, favorited: Boolean) {
+        if (imageId.isBlank()) return
+        context.promptLensDataStore.edit { prefs ->
+            val current = prefs[localFavoriteIdsKey] ?: emptySet()
+            prefs[localFavoriteIdsKey] = if (favorited) current + imageId else current - imageId
+        }
+    }
+
+    suspend fun clearLocalFavorites() {
+        context.promptLensDataStore.edit { prefs ->
+            prefs[localFavoriteIdsKey] = emptySet()
         }
     }
 
@@ -226,5 +247,55 @@ class LocalPreferencesRepository(private val context: Context) {
         }
 
         return removedUrls
+    }
+
+    suspend fun loadCachedAiTools(): List<AiToolItem> {
+        val raw = context.promptLensDataStore.data.first()[cachedAiToolsJsonKey].orEmpty()
+        if (raw.isBlank()) return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            buildList(arr.length()) {
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    val enabled = obj.optBoolean("enabled", true)
+                    if (enabled) {
+                        add(
+                            AiToolItem(
+                                id = obj.optString("id"),
+                                name = obj.optString("name"),
+                                url = obj.optString("url"),
+                                logoUrl = obj.optString("logoUrl"),
+                                enabled = true,
+                                sortOrder = obj.optLong("sortOrder", 0L),
+                                updatedAt = obj.optLong("updatedAtSec", 0L)
+                                    .takeIf { it > 0L }
+                                    ?.let { Timestamp(it, 0) }
+                            )
+                        )
+                    }
+                }
+            }.sortedBy { it.sortOrder }
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun saveCachedAiTools(tools: List<AiToolItem>) {
+        val enabledSorted = tools.filter { it.enabled }.sortedBy { it.sortOrder }
+        val toolsArray = JSONArray()
+        enabledSorted.forEach { tool ->
+            toolsArray.put(
+                JSONObject().apply {
+                    put("id", tool.id)
+                    put("name", tool.name)
+                    put("url", tool.url)
+                    put("logoUrl", tool.logoUrl)
+                    put("enabled", tool.enabled)
+                    put("sortOrder", tool.sortOrder)
+                    put("updatedAtSec", tool.updatedAt?.seconds ?: 0L)
+                }
+            )
+        }
+        context.promptLensDataStore.edit { prefs ->
+            prefs[cachedAiToolsJsonKey] = toolsArray.toString()
+        }
     }
 }

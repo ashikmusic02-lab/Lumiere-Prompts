@@ -7,7 +7,8 @@
     <string name="nav_home">Home</string>
     <string name="nav_categories">Categories</string>
     <string name="nav_saved">Saved</string>
-    <string name="nav_notifications">Notifications</string>
+    <string name="nav_ai_tools">AI Tools</string>
+    <string name="nav_notifications">Alerts</string>
     <string name="nav_profile">Profile</string>
 
     <!-- Connectivity & Offline -->
@@ -15,7 +16,7 @@
     <string name="turn_on_internet_message">Turn on internet and try again</string>
 
     <!-- Home & Search -->
-    <string name="search_placeholder">Search inspirations…</string>
+    <string name="search_placeholder">Search</string>
     <string name="category_all">All</string>
     <string name="empty_inspirations">No inspirations yet</string>
     <string name="empty_search_results">No matching results</string>
@@ -30,6 +31,11 @@
     <string name="sort_trending">Trending</string>
     <string name="sort_most_liked">Most Liked</string>
 
+    <!-- AI Tools Tab -->
+    <string name="ai_tools_title">AI Tools</string>
+    <string name="ai_tools_search_placeholder">Search AI tools…</string>
+    <string name="empty_ai_tools">No AI tools available yet</string>
+
     <!-- Image Detail & Prompt -->
     <string name="get_prompt_action">Get Prompt</string>
     <string name="prompt_heading">Prompt</string>
@@ -41,6 +47,8 @@
     <string name="like_action">Like</string>
     <string name="back_action">Back</string>
     <string name="prompt_coming_soon">Prompt coming soon</string>
+    <string name="prompt_generic_error">Something went wrong. Please try again.</string>
+    <string name="more_like_this">More like this</string>
 
     <!-- Comments & Moderation -->
     <string name="comments_header">Comments (%1$d)</string>
@@ -68,7 +76,7 @@
     <string name="empty_saved">No saved posts yet</string>
     <string name="go_to_home">Go to Home</string>
 
-    <!-- Notifications Tab -->
+    <!-- Notifications Screen -->
     <string name="notifications_title">Notifications</string>
     <string name="empty_notifications">No notifications yet</string>
     <string name="post_no_longer_available">This post is no longer available</string>
@@ -82,7 +90,7 @@
     <string name="sign_in_with_google">Sign in with Google</string>
     <string name="signed_in_message">Signed in</string>
     <string name="signed_out_message">Signed out</string>
-    <string name="guest_user_title">Welcome to PromptLens</string>
+    <string name="guest_user_title">Guest</string>
     <string name="language_label">Language</string>
     <string name="language_english" translatable="false">English</string>
     <string name="language_bangla" translatable="false">বাংলা</string>
@@ -92,13 +100,13 @@
     <string name="theme_system">System</string>
     <string name="notifications_settings_label">Notification settings</string>
     <string name="ad_privacy_settings_label">Privacy choices</string>
-    <string name="privacy_policy_label">Privacy Policy</string>
-    <string name="terms_of_use_label">Terms of Use</string>
+    <string name="privacy_policy_label">Privacy policy</string>
+    <string name="terms_of_use_label">Terms of use</string>
     <string name="about_label">About</string>
     <string name="about_version_format">Version %1$s</string>
     <string name="contact_support_label">Contact support</string>
     <string name="share_app_label">Share app</string>
-    <string name="rate_app_label">Rate app</string>
+    <string name="rate_app_label">Rate us</string>
     <string name="clear_image_cache_label">Clear image cache</string>
     <string name="image_cache_cleared">Image cache cleared</string>
     <string name="sign_out_label">Sign out</string>

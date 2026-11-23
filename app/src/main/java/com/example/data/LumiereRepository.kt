@@ -5,6 +5,7 @@ import android.os.Bundle
 import com.example.R
 import com.example.auth.GoogleSignInManager
 import com.example.model.AdvertisementSettings
+import com.example.model.AiToolItem
 import com.example.model.AppConfigSettings
 import com.example.model.AppNotification
 import com.example.model.CategoryItem
@@ -37,7 +38,8 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
 
 class ReauthRequiredForDeleteException : Exception("Re-authentication required")
-class PromptComingSoonException : Exception("Prompt coming soon")
+class PromptComingSoonException(message: String = "Prompt coming soon") : Exception(message)
+class PostDeletedException(message: String = "This post is no longer available") : Exception(message)
 
 class LumiereRepository(
     private val db: FirebaseFirestore,
@@ -142,6 +144,68 @@ class LumiereRepository(
         }
     }
 
+    /**
+     * Fetches all enabled AI tools from `aiTools` (`enabled == true`) and sorts them by `sortOrder ASC` on the client.
+     */
+    suspend fun fetchAllEnabledAiTools(source: Source = Source.DEFAULT): Result<List<AiToolItem>> {
+        val path = "aiTools"
+        return try {
+            val snapshot = db.collection(path)
+                .whereEqualTo("enabled", true)
+                .get(source)
+                .await()
+
+            val items = snapshot.toObjects(
+                AiToolItem::class.java,
+                DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+            ).sortedBy { it.sortOrder }
+            Result.success(items)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: FirebaseFirestoreException) {
+            if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                Result.success(emptyList())
+            } else {
+                handleFirestoreError(e, OperationType.LIST, path)
+                Result.failure(e)
+            }
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.LIST, path)
+            Result.failure(e)
+        }
+    }
+
+    fun observeEnabledAiTools(): Flow<List<AiToolItem>> = flow {
+        val uid = auth.currentUser?.uid
+        val path = "aiTools"
+        emitAll(
+            db.collection(path)
+                .whereEqualTo("enabled", true)
+                .snapshots()
+                .map { snapshot ->
+                    snapshot.toObjects(
+                        AiToolItem::class.java,
+                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                    ).sortedBy { it.sortOrder }
+                }
+                .catch { error ->
+                    val firestoreError = generateSequence(error) { it.cause }
+                        .filterIsInstance<FirebaseFirestoreException>()
+                        .firstOrNull()
+                    if (firestoreError == null && error is CancellationException) throw error
+                    if (firestoreError?.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        emit(emptyList())
+                        return@catch
+                    }
+                    val exceptionToLog = firestoreError ?: (error as? Exception)
+                    if (exceptionToLog != null && auth.currentUser?.uid == uid) {
+                        handleFirestoreError(exceptionToLog, OperationType.LIST, path)
+                    }
+                    throw error
+                }
+        )
+    }
+
     // =========================================================================
     // PROMPT ACCESS (`promptUnlocks/{uid}_{imageId}` -> `imagePrompts/{imageId}`)
     // Prompt text is NEVER cached to disk, DataStore, Room, or logged.
@@ -174,9 +238,20 @@ class LumiereRepository(
 
             withTimeout(WRITE_TIMEOUT_MS) {
                 val unlockRef = db.collection("promptUnlocks").document(unlockDocId)
-                val existingUnlock = unlockRef.get(Source.SERVER).await()
+                // Note: firestore.rules `allow get` on promptUnlocks checks `existing().userId == request.auth.uid`.
+                // When the document does not exist yet, `existing()` (resource.data) is null, so Firestore throws
+                // PERMISSION_DENIED on `get()`. Catch PERMISSION_DENIED on `get()` as `unlockExists = false`.
+                val unlockExists = try {
+                    unlockRef.get(Source.SERVER).await().exists()
+                } catch (e: FirebaseFirestoreException) {
+                    if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        false
+                    } else {
+                        throw e
+                    }
+                }
 
-                if (!existingUnlock.exists()) {
+                if (!unlockExists) {
                     val safeTitle = image.title.trim().take(150).ifBlank { "Inspiration" }
                     val safeNetwork = adNetwork.trim().take(50).ifBlank { "none" }
                     val payload = mapOf(
@@ -195,8 +270,28 @@ class LumiereRepository(
                 db.collection("imagePrompts").document(cleanImageId).get(Source.SERVER).await()
             }
             if (!promptSnap.exists()) {
+                val postStillExists = try {
+                    val imgSnap = withTimeout(WRITE_TIMEOUT_MS) {
+                        db.collection("images").document(cleanImageId).get(Source.SERVER).await()
+                    }
+                    imgSnap.exists() && imgSnap.getString("status") == "published"
+                } catch (e: FirebaseFirestoreException) {
+                    if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED ||
+                        e.code == FirebaseFirestoreException.Code.NOT_FOUND
+                    ) {
+                        false
+                    } else {
+                        true
+                    }
+                } catch (_: Exception) {
+                    true
+                }
+                if (!postStillExists) {
+                    return Result.failure(PostDeletedException())
+                }
                 return Result.failure(PromptComingSoonException())
             }
+
             val doc = promptSnap.toObject(
                 ImagePromptDocument::class.java,
                 DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
@@ -230,10 +325,18 @@ class LumiereRepository(
         val unlockDocId = "${uid}_$cleanImageId"
         return try {
             require(isValidDocId(cleanImageId) && isValidDocId(unlockDocId)) { "Invalid ID" }
-            val unlockSnap = withTimeout(WRITE_TIMEOUT_MS) {
-                db.collection("promptUnlocks").document(unlockDocId).get(Source.SERVER).await()
+            val unlockExists = withTimeout(WRITE_TIMEOUT_MS) {
+                try {
+                    db.collection("promptUnlocks").document(unlockDocId).get(Source.SERVER).await().exists()
+                } catch (e: FirebaseFirestoreException) {
+                    if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        false
+                    } else {
+                        throw e
+                    }
+                }
             }
-            if (!unlockSnap.exists()) {
+            if (!unlockExists) {
                 return Result.success(null)
             }
             val promptSnap = withTimeout(WRITE_TIMEOUT_MS) {
@@ -283,8 +386,16 @@ class LumiereRepository(
     }
 
     fun observeUserLikes(userId: String): Flow<List<LikeRecord>> = flow {
-        val uid = requireSignedInUserId()
-        check(uid == userId) { "User ID mismatch" }
+        val currentUser = auth.currentUser
+        if (currentUser == null || !GoogleSignInManager.isRealAuthenticatedUser(currentUser)) {
+            emit(emptyList())
+            return@flow
+        }
+        val uid = currentUser.uid
+        if (uid != userId) {
+            emit(emptyList())
+            return@flow
+        }
         val path = "likes"
         emitAll(
             db.collection(path)
@@ -301,6 +412,10 @@ class LumiereRepository(
                         .filterIsInstance<FirebaseFirestoreException>()
                         .firstOrNull()
                     if (firestoreError == null && error is CancellationException) throw error
+                    if (firestoreError?.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        emit(emptyList())
+                        return@catch
+                    }
                     val exceptionToLog = firestoreError ?: (error as? Exception)
                     if (exceptionToLog != null && auth.currentUser?.uid == uid) {
                         handleFirestoreError(exceptionToLog, OperationType.LIST, path)
@@ -311,8 +426,16 @@ class LumiereRepository(
     }
 
     fun observeUserFavorites(userId: String): Flow<List<FavoriteRecord>> = flow {
-        val uid = requireSignedInUserId()
-        check(uid == userId) { "User ID mismatch" }
+        val currentUser = auth.currentUser
+        if (currentUser == null || !GoogleSignInManager.isRealAuthenticatedUser(currentUser)) {
+            emit(emptyList())
+            return@flow
+        }
+        val uid = currentUser.uid
+        if (uid != userId) {
+            emit(emptyList())
+            return@flow
+        }
         val path = "favorites"
         emitAll(
             db.collection(path)
@@ -329,6 +452,10 @@ class LumiereRepository(
                         .filterIsInstance<FirebaseFirestoreException>()
                         .firstOrNull()
                     if (firestoreError == null && error is CancellationException) throw error
+                    if (firestoreError?.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        emit(emptyList())
+                        return@catch
+                    }
                     val exceptionToLog = firestoreError ?: (error as? Exception)
                     if (exceptionToLog != null && auth.currentUser?.uid == uid) {
                         handleFirestoreError(exceptionToLog, OperationType.LIST, path)
@@ -407,8 +534,16 @@ class LumiereRepository(
      * then filters `adminReply.isNotBlank()` and sorts newest-first on the client (NO composite index needed).
      */
     fun observeUserCommentReplies(userId: String): Flow<List<ImageComment>> = flow {
-        val uid = requireSignedInUserId()
-        check(uid == userId) { "User ID mismatch" }
+        val currentUser = auth.currentUser
+        if (currentUser == null || !GoogleSignInManager.isRealAuthenticatedUser(currentUser)) {
+            emit(emptyList())
+            return@flow
+        }
+        val uid = currentUser.uid
+        if (uid != userId) {
+            emit(emptyList())
+            return@flow
+        }
         val path = "comments"
         emitAll(
             db.collection(path)
@@ -427,6 +562,10 @@ class LumiereRepository(
                         .filterIsInstance<FirebaseFirestoreException>()
                         .firstOrNull()
                     if (firestoreError == null && error is CancellationException) throw error
+                    if (firestoreError?.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        emit(emptyList())
+                        return@catch
+                    }
                     val exceptionToLog = firestoreError ?: (error as? Exception)
                     if (exceptionToLog != null && auth.currentUser?.uid == uid) {
                         handleFirestoreError(exceptionToLog, OperationType.LIST, path)
@@ -513,6 +652,15 @@ class LumiereRepository(
             Result.success(image)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: FirebaseFirestoreException) {
+            if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED ||
+                e.code == FirebaseFirestoreException.Code.NOT_FOUND
+            ) {
+                Result.success(null)
+            } else {
+                handleFirestoreError(e, OperationType.GET, path)
+                Result.failure(e)
+            }
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.GET, path)
             Result.failure(e)
@@ -584,6 +732,13 @@ class LumiereRepository(
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: FirebaseFirestoreException) {
+            if (e.code != FirebaseFirestoreException.Code.PERMISSION_DENIED &&
+                e.code != FirebaseFirestoreException.Code.NOT_FOUND
+            ) {
+                handleFirestoreError(e, OperationType.UPDATE, path)
+            }
+            Result.failure(e)
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, path)
             Result.failure(e)
@@ -696,6 +851,13 @@ class LumiereRepository(
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: FirebaseFirestoreException) {
+            if (e.code != FirebaseFirestoreException.Code.PERMISSION_DENIED &&
+                e.code != FirebaseFirestoreException.Code.NOT_FOUND
+            ) {
+                handleFirestoreError(e, OperationType.UPDATE, path)
+            }
+            Result.failure(e)
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, path)
             Result.failure(e)

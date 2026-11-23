@@ -11,7 +11,7 @@
     public <methods>;
 }
 
-# Firebase Firestore & Auth reflection safety
+# Firebase Firestore, Auth & Messaging reflection safety
 -keep class com.google.firebase.** { *; }
 -dontwarn com.google.firebase.**
 -keepclassmembers class * {
@@ -21,15 +21,16 @@
     @com.google.firebase.firestore.ServerTimestamp <fields>;
 }
 
-# Google Mobile Ads (AdMob)
+# Google Mobile Ads (AdMob) & UMP
 -keep public class com.google.android.gms.ads.** { public *; }
 -keep public class com.google.ads.** { public *; }
+-keep class com.google.android.ump.** { *; }
 -dontwarn com.google.android.gms.ads.**
 
-# OneSignal Push Notifications
--keep class com.onesignal.** { *; }
--dontwarn com.onesignal.**
--keepclassmembers class * implements com.onesignal.notifications.INotificationClickListener { *; }
+# Firebase Messaging Service & Google Credential Manager
+-keep class com.example.notifications.PromptLensMessagingService { *; }
+-keep class androidx.credentials.** { *; }
+-keep class com.google.android.libraries.identity.googleid.** { *; }
 
 # Coil Image Loader & Coroutines
 -dontwarn coil.**

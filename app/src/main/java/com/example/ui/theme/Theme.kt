@@ -4,62 +4,38 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 private val PromptLensDarkColorScheme = darkColorScheme(
-    primary = PromptVioletPrimary,
-    onPrimary = Color(0xFF14082E),
+    primary = AccentViolet,
+    onPrimary = Color.White,
     primaryContainer = PromptVioletContainer,
-    onPrimaryContainer = Color(0xFFF3E8FF),
-    secondary = PromptCyanSecondary,
-    onSecondary = Color(0xFF042033),
+    onPrimaryContainer = Color.White,
+    secondary = AccentBlue,
+    onSecondary = Color.White,
     secondaryContainer = PromptCyanContainer,
     onSecondaryContainer = Color(0xFFE0F2FE),
     tertiary = PromptGoldAccent,
     onTertiary = Color(0xFF1F1600),
-    background = CosmicIndigoBackground,
+    background = NavyIndigoBgTop,
     onBackground = DarkTextPrimary,
-    surface = CosmicIndigoSurface,
+    surface = IndigoSurfaceDark,
     onSurface = DarkTextPrimary,
-    surfaceVariant = CosmicIndigoCard,
+    surfaceVariant = IndigoSurfaceLight,
     onSurfaceVariant = DarkTextSecondary,
-    outline = CosmicIndigoBorder,
-    outlineVariant = Color(0xFF282058),
-    error = CrimsonError,
-    onError = Color.White
-)
-
-private val PromptLensLightColorScheme = lightColorScheme(
-    primary = PromptVioletDark,
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFEDE9FE),
-    onPrimaryContainer = Color(0xFF2E1065),
-    secondary = PromptCyanDark,
-    onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE0F2FE),
-    onSecondaryContainer = Color(0xFF0C4A6E),
-    tertiary = PromptGoldDark,
-    onTertiary = Color.White,
-    background = LightBackground,
-    onBackground = LightTextPrimary,
-    surface = LightSurface,
-    onSurface = LightTextPrimary,
-    surfaceVariant = LightCardSurface,
-    onSurfaceVariant = LightTextSecondary,
-    outline = LightBorder,
-    outlineVariant = Color(0xFFE5E0F8),
+    outline = IndigoBorderBase,
+    outlineVariant = IndigoSoftBorder,
     error = CrimsonError,
     onError = Color.White
 )
 
 val PromptLensShapes = Shapes(
-    extraSmall = RoundedCornerShape(10.dp),
-    small = RoundedCornerShape(14.dp),
-    medium = RoundedCornerShape(18.dp),
-    large = RoundedCornerShape(22.dp),
+    extraSmall = RoundedCornerShape(14.dp),
+    small = RoundedCornerShape(18.dp),
+    medium = RoundedCornerShape(22.dp),
+    large = RoundedCornerShape(28.dp),
     extraLarge = RoundedCornerShape(28.dp)
 )
 
@@ -69,11 +45,10 @@ fun LumiereTheme(
     isBangla: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) PromptLensDarkColorScheme else PromptLensLightColorScheme
     val typography = buildAppTypography(isBangla = isBangla)
 
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = PromptLensDarkColorScheme,
         typography = typography,
         shapes = PromptLensShapes,
         content = content

@@ -1,5 +1,6 @@
 package com.example.model
 
+import android.net.Uri
 import androidx.annotation.Keep
 import com.example.BuildConfig
 import com.google.firebase.Timestamp
@@ -77,6 +78,44 @@ data class CategoryItem(
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
+
+/**
+ * AI Tool document stored in `aiTools/{toolId}`.
+ */
+@Keep
+@IgnoreExtraProperties
+data class AiToolItem(
+    @DocumentId val id: String = "",
+    val name: String = "",
+    val url: String = "",
+    val logoUrl: String = "",
+    val enabled: Boolean = true,
+    val sortOrder: Long = 0L,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    fun resolvedLogoUrl(): String {
+        val direct = logoUrl.trim()
+        if (direct.isNotBlank()) return direct
+        val rawUrl = url.trim()
+        if (rawUrl.isBlank()) return ""
+        val normalized = if (rawUrl.startsWith("http://", ignoreCase = true) ||
+            rawUrl.startsWith("https://", ignoreCase = true)
+        ) {
+            rawUrl
+        } else {
+            "https://$rawUrl"
+        }
+        val host = runCatching { Uri.parse(normalized).host.orEmpty() }
+            .getOrDefault("")
+            .trim()
+            .removePrefix("www.")
+        return if (host.isNotBlank()) {
+            "https://www.google.com/s2/favicons?domain=$host&sz=128"
+        } else {
+            ""
+        }
+    }
+}
 
 /**
  * User profile stored in `users/{userId}`.
@@ -190,7 +229,7 @@ data class AppNotification(
 )
 
 /**
- * Merged item displayed in the Notifications tab:
+ * Merged item displayed in the Notifications screen:
  * either a published broadcast notification or an admin reply to the signed-in user's comment.
  */
 sealed interface MergedNotificationItem {
@@ -238,6 +277,8 @@ data class AppConfigSettings(
  * - If the document exists in Firestore and a unit ID is blank (""), that ad format is disabled.
  * - If the document does NOT exist in Firestore (first run), [defaultWhenDocumentMissing] supplies
  *   the built-in BuildConfig ad unit IDs.
+ * - Optional App Open ad fields (`appOpenAdsEnabled` and `appOpenAdUnitId`) default to false / ""
+ *   so if either field is missing in Firestore, App Open ads stay completely OFF.
  */
 @Keep
 @IgnoreExtraProperties
@@ -248,6 +289,7 @@ data class AdvertisementSettings(
     val detailBannerEnabled: Boolean = true,
     val rewardedAdsEnabled: Boolean = true,
     val interstitialAdsEnabled: Boolean = true,
+    val appOpenAdsEnabled: Boolean = false,
     val testAdMode: Boolean = false,
     val reusePreviousUnlocks: Boolean = false,
     val interstitialFrequency: Long = 3L,
@@ -255,6 +297,7 @@ data class AdvertisementSettings(
     val bannerAdUnitId: String = BuildConfig.ADMOB_BANNER_AD_UNIT_ID,
     val rewardedAdUnitId: String = BuildConfig.ADMOB_REWARDED_AD_UNIT_ID,
     val interstitialAdUnitId: String = BuildConfig.ADMOB_INTERSTITIAL_AD_UNIT_ID,
+    val appOpenAdUnitId: String = "",
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
     companion object {
@@ -264,12 +307,14 @@ data class AdvertisementSettings(
             detailBannerEnabled = true,
             rewardedAdsEnabled = true,
             interstitialAdsEnabled = true,
+            appOpenAdsEnabled = false,
             testAdMode = false,
             reusePreviousUnlocks = false,
             interstitialFrequency = 3L,
             bannerAdUnitId = BuildConfig.ADMOB_BANNER_AD_UNIT_ID,
             rewardedAdUnitId = BuildConfig.ADMOB_REWARDED_AD_UNIT_ID,
-            interstitialAdUnitId = BuildConfig.ADMOB_INTERSTITIAL_AD_UNIT_ID
+            interstitialAdUnitId = BuildConfig.ADMOB_INTERSTITIAL_AD_UNIT_ID,
+            appOpenAdUnitId = ""
         )
     }
 }

@@ -1,7 +1,11 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -9,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
@@ -17,19 +22,21 @@ import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.ImageSearch
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -40,11 +47,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.ads.LumiereBannerAdSlot
@@ -54,13 +63,22 @@ import com.example.model.InspirationImage
 import com.example.model.UiState
 import com.example.ui.components.InspirationGalleryCard
 import com.example.ui.components.ShimmerSkeletonCard
+import com.example.ui.components.pressScaleClickable
+import com.example.ui.theme.AccentViolet
+import com.example.ui.theme.HeartLikeRed
+import com.example.ui.theme.IndigoSoftBorder
+import com.example.ui.theme.IndigoSurfaceDark
+import com.example.ui.theme.PromptAccentGradientBrush
+import com.example.ui.theme.PromptCardSurfaceBrush
 
 @Composable
 fun HomeScreen(
     imagesUiState: UiState<List<InspirationImage>>,
     categories: List<CategoryItem>,
     likedIds: Set<String>,
+    hasUnreadNotifications: Boolean,
     advertisementSettings: AdvertisementSettings,
+    onOpenNotifications: () -> Unit,
     onRetrySync: () -> Unit,
     onImageClick: (InspirationImage) -> Unit,
     modifier: Modifier = Modifier
@@ -69,7 +87,8 @@ fun HomeScreen(
     var selectedCategoryId by rememberSaveable { mutableStateOf("all") }
 
     val publishedCategories = remember(categories) {
-        categories.filter { it.status == "published" }.sortedBy { it.sortOrder }
+        categories.filter { it.status == "published" && it.name.isNotBlank() }
+            .sortedBy { it.sortOrder }
     }
 
     val allPublishedImages = remember(imagesUiState) {
@@ -110,38 +129,73 @@ fun HomeScreen(
             contentPadding = PaddingValues(
                 start = 16.dp,
                 end = 16.dp,
-                top = 12.dp,
-                bottom = 20.dp
+                top = 14.dp,
+                bottom = 104.dp
             ),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalItemSpacing = 12.dp
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalItemSpacing = 16.dp
         ) {
-            // 1. Clean Top Bar: Logo + App Name (NO manual refresh / reload icon)
+            // 1. Top Row: App Logo + Name "PromptLens" on the left, Bell icon with unread red dot on the right
             item(span = StaggeredGridItemSpan.FullLine) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                        .padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.ic_promptlens_logo),
-                        contentDescription = stringResource(R.string.app_name),
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_promptlens_logo),
+                            contentDescription = stringResource(R.string.app_name),
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                        )
+                        Text(
+                            text = stringResource(R.string.app_name),
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    // Bell icon button with small red dot when unread notifications exist
+                    Box(
                         modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(11.dp))
-                    )
-                    Text(
-                        text = stringResource(R.string.app_name),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontWeight = FontWeight.ExtraBold
-                    )
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(PromptCardSurfaceBrush, CircleShape)
+                            .border(1.dp, IndigoSoftBorder, CircleShape)
+                            .pressScaleClickable(onClick = onOpenNotifications)
+                            .testTag("home_notifications_bell_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Notifications,
+                            contentDescription = stringResource(R.string.notifications_title),
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        if (hasUnreadNotifications) {
+                            Box(
+                                modifier = Modifier
+                                    .size(9.dp)
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = (-9).dp, y = 9.dp)
+                                    .clip(CircleShape)
+                                    .background(HeartLikeRed)
+                                    .testTag("home_unread_bell_dot")
+                            )
+                        }
+                    }
                 }
             }
 
-            // 2. Search Field
+            // 2. Pill-shaped Search Bar (placeholder "Search")
             item(span = StaggeredGridItemSpan.FullLine) {
                 OutlinedTextField(
                     value = searchQuery,
@@ -157,7 +211,7 @@ fun HomeScreen(
                         Icon(
                             imageVector = Icons.Default.Search,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     },
                     trailingIcon = {
@@ -168,18 +222,21 @@ fun HomeScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
-                                    contentDescription = null
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
                     },
                     singleLine = true,
-                    shape = RoundedCornerShape(18.dp),
+                    shape = RoundedCornerShape(50),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
-                        focusedContainerColor = MaterialTheme.colorScheme.surface,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        focusedBorderColor = AccentViolet,
+                        unfocusedBorderColor = IndigoSoftBorder,
+                        focusedContainerColor = IndigoSurfaceDark,
+                        unfocusedContainerColor = IndigoSurfaceDark,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -187,81 +244,41 @@ fun HomeScreen(
                 )
             }
 
-            // 3. Category Chips Row: ONLY category names as text chips (plus "All" first)
+            // 3. Horizontally scrollable row of pill category chips (first chip "All"; selected = accent gradient; name only)
             item(span = StaggeredGridItemSpan.FullLine) {
                 LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = PaddingValues(vertical = 2.dp),
                     modifier = Modifier.testTag("home_category_row")
                 ) {
                     item(key = "chip_all") {
-                        val isAllSelected = selectedCategoryId == "all"
-                        FilterChip(
-                            selected = isAllSelected,
+                        CategoryPillChip(
+                            label = stringResource(R.string.category_all),
+                            selected = selectedCategoryId == "all",
                             onClick = { selectedCategoryId = "all" },
-                            label = {
-                                Text(
-                                    text = stringResource(R.string.category_all),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Medium
-                                )
-                            },
-                            shape = RoundedCornerShape(50),
-                            colors = FilterChipDefaults.filterChipColors(
-                                containerColor = MaterialTheme.colorScheme.surface,
-                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                            ),
-                            border = FilterChipDefaults.filterChipBorder(
-                                enabled = true,
-                                selected = isAllSelected,
-                                borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                                selectedBorderColor = MaterialTheme.colorScheme.primary
-                            ),
-                            modifier = Modifier.testTag("home_chip_all")
+                            testTag = "home_chip_all"
                         )
                     }
                     items(publishedCategories, key = { it.id }) { category ->
                         val isSelected = selectedCategoryId == category.id
-                        FilterChip(
+                        CategoryPillChip(
+                            label = category.name,
                             selected = isSelected,
                             onClick = {
                                 selectedCategoryId = if (isSelected) "all" else category.id
                             },
-                            label = {
-                                Text(
-                                    text = category.name,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                )
-                            },
-                            shape = RoundedCornerShape(50),
-                            colors = FilterChipDefaults.filterChipColors(
-                                containerColor = MaterialTheme.colorScheme.surface,
-                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
-                            ),
-                            border = FilterChipDefaults.filterChipBorder(
-                                enabled = true,
-                                selected = isSelected,
-                                borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                                selectedBorderColor = MaterialTheme.colorScheme.primary
-                            ),
-                            modifier = Modifier.testTag("home_chip_${category.id}")
+                            testTag = "home_chip_${category.id}"
                         )
                     }
                 }
             }
 
-            // 4. ONE Uniform Staggered 2-Column Grid containing ALL images (newest first)
-            // Shimmer skeleton cards are shown ONLY on the very first launch with an empty cache.
+            // 4. ONE Uniform Staggered 2-Column Grid of all published posts, newest first
             when (imagesUiState) {
                 is UiState.Loading -> {
                     items(6) { index ->
                         ShimmerSkeletonCard(
-                            aspectRatio = if (index % 2 == 0) 0.75f else 0.9f
+                            aspectRatio = if (index % 2 == 0) 0.74f else 0.88f
                         )
                     }
                 }
@@ -301,14 +318,50 @@ fun HomeScreen(
             }
         }
 
-        // One Banner Ad at the bottom of the Home content area above the tab bar
+        // Optional Home Banner Ad in its own 20dp rounded container above the floating bottom bar
         LumiereBannerAdSlot(
             settings = advertisementSettings,
             enabledForPlacement = advertisementSettings.homeBannerEnabled,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 8.dp, bottom = 4.dp)
+                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 92.dp)
                 .testTag("home_bottom_banner_ad")
+        )
+    }
+}
+
+@Composable
+private fun CategoryPillChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    testTag: String
+) {
+    val pillShape = RoundedCornerShape(50)
+    Box(
+        modifier = Modifier
+            .clip(pillShape)
+            .then(
+                if (selected) {
+                    Modifier.background(PromptAccentGradientBrush, pillShape)
+                } else {
+                    Modifier
+                        .background(IndigoSurfaceDark, pillShape)
+                        .border(1.dp, IndigoSoftBorder, pillShape)
+                }
+            )
+            .pressScaleClickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 10.dp)
+            .testTag(testTag),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -318,26 +371,36 @@ private fun HomeEmptyState(
     title: String,
     modifier: Modifier = Modifier
 ) {
-    Column(
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = IndigoSurfaceDark,
+        border = BorderStroke(1.dp, IndigoSoftBorder),
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 64.dp, horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .padding(vertical = 32.dp)
     ) {
-        Icon(
-            imageVector = Icons.Outlined.ImageSearch,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-            modifier = Modifier.size(48.dp)
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 44.dp, horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.ImageSearch,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                modifier = Modifier.size(44.dp)
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
 
@@ -347,26 +410,42 @@ private fun HomeErrorState(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = IndigoSurfaceDark,
+        border = BorderStroke(1.dp, IndigoSoftBorder),
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 64.dp, horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .padding(vertical = 32.dp)
     ) {
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(
-            onClick = onRetry,
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.testTag("home_retry_button")
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 44.dp, horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Text(text = stringResource(R.string.retry_action))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = onRetry,
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AccentViolet,
+                    contentColor = Color.White
+                ),
+                modifier = Modifier.testTag("home_retry_button")
+            ) {
+                Text(
+                    text = stringResource(R.string.retry_action),
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
     }
 }
