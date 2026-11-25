@@ -2,6 +2,7 @@ package com.example.model
 
 import android.net.Uri
 import androidx.annotation.Keep
+import androidx.compose.runtime.Immutable
 import com.example.BuildConfig
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
@@ -24,6 +25,7 @@ enum class ThemePreference {
  * Photography inspiration item stored in Firestore `images/{imageId}`.
  * Exact schema per SCHEMA.md — never contains `promptText`.
  */
+@Immutable
 @Keep
 @IgnoreExtraProperties
 data class InspirationImage(
@@ -65,6 +67,7 @@ data class ImagePromptDocument(
 /**
  * Category document stored in `categories/{categoryId}`.
  */
+@Immutable
 @Keep
 @IgnoreExtraProperties
 data class CategoryItem(
@@ -82,6 +85,7 @@ data class CategoryItem(
 /**
  * AI Tool document stored in `aiTools/{toolId}`.
  */
+@Immutable
 @Keep
 @IgnoreExtraProperties
 data class AiToolItem(
@@ -166,6 +170,7 @@ data class FavoriteRecord(
 /**
  * User comment stored in `comments/{commentId}`.
  */
+@Immutable
 @Keep
 @IgnoreExtraProperties
 data class ImageComment(
@@ -215,6 +220,7 @@ data class PromptUnlock(
 /**
  * In-app notification item stored in `notifications/{notificationId}`.
  */
+@Immutable
 @Keep
 @IgnoreExtraProperties
 data class AppNotification(
@@ -232,6 +238,7 @@ data class AppNotification(
  * Merged item displayed in the Notifications screen:
  * either a published broadcast notification or an admin reply to the signed-in user's comment.
  */
+@Immutable
 sealed interface MergedNotificationItem {
     val uniqueKey: String
     val imageId: String
@@ -259,6 +266,7 @@ sealed interface MergedNotificationItem {
 /**
  * Global application configuration stored in `appSettings/global`.
  */
+@Immutable
 @Keep
 @IgnoreExtraProperties
 data class AppConfigSettings(
@@ -280,6 +288,7 @@ data class AppConfigSettings(
  * - Optional App Open ad fields (`appOpenAdsEnabled` and `appOpenAdUnitId`) default to false / ""
  *   so if either field is missing in Firestore, App Open ads stay completely OFF.
  */
+@Immutable
 @Keep
 @IgnoreExtraProperties
 data class AdvertisementSettings(

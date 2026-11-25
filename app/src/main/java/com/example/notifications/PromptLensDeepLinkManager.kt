@@ -11,15 +11,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Firebase Cloud Messaging & Deep-Link Router (Requirement E):
+ * Firebase Cloud Messaging & Deep-Link Router:
  * - Subscribes to FCM topic `"all"` on app start and ensures notification channel `"general"` exists.
  * - Handles incoming notification and deep-link intents in all 3 app states (killed, background, foreground):
  *   - Data key `"link"` (e.g. `promptlens://image/{id}`)
  *   - Data key `"imageId"` / `"image_id"` (plain id)
  *   - Custom URI scheme `promptlens://image/{id}`
- * - Zero OneSignal or ONESIGNAL_APP_ID usage.
  */
-object OneSignalDeepLinkManager {
+object PromptLensDeepLinkManager {
     private const val TAG = "PromptLensMessaging"
     private const val TOPIC_ALL = "all"
 

@@ -64,6 +64,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.model.AiToolItem
 import com.example.model.CategoryItem
@@ -73,10 +74,15 @@ import com.example.ui.components.LumiereExternalImage
 import com.example.ui.components.openInAppCustomTab
 import com.example.ui.components.pressScaleClickable
 import com.example.ui.theme.AccentViolet
+import com.example.ui.theme.CardBackground
 import com.example.ui.theme.IndigoSoftBorder
 import com.example.ui.theme.IndigoSurfaceDark
+import com.example.ui.theme.PrimaryPurple
+import com.example.ui.theme.PrimaryText
 import com.example.ui.theme.PromptAccentGradientBrush
 import com.example.ui.theme.PromptCardSurfaceBrush
+import com.example.ui.theme.SecondaryText
+import com.example.ui.theme.SubtleBorder
 
 enum class CategorySortOption {
     LATEST,
@@ -124,9 +130,11 @@ fun CategoriesScreen(
             Spacer(modifier = Modifier.height(14.dp))
             Text(
                 text = stringResource(R.string.categories_title),
-                style = MaterialTheme.typography.headlineSmall,
-                color = Color.White,
-                fontWeight = FontWeight.SemiBold
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = PrimaryText
             )
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -139,22 +147,22 @@ fun CategoriesScreen(
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(2),
                     contentPadding = PaddingValues(bottom = 104.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag("categories_name_grid")
                 ) {
                     items(publishedCategories, key = { it.id }) { category ->
-                        val cardShape = RoundedCornerShape(28.dp)
+                        val cardShape = RoundedCornerShape(20.dp)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(cardShape)
-                                .background(PromptCardSurfaceBrush, cardShape)
-                                .border(1.dp, IndigoSoftBorder, cardShape)
+                                .background(CardBackground, cardShape)
+                                .border(1.dp, SubtleBorder, cardShape)
                                 .pressScaleClickable { selectedCategoryId = category.id }
-                                .padding(horizontal = 16.dp, vertical = 20.dp)
+                                .padding(horizontal = 16.dp, vertical = 18.dp)
                                 .testTag("category_card_${category.id}")
                         ) {
                             Row(
@@ -336,8 +344,8 @@ fun CategoriesScreen(
                 LazyVerticalStaggeredGrid(
                     columns = StaggeredGridCells.Fixed(2),
                     contentPadding = PaddingValues(bottom = 104.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalItemSpacing = 16.dp,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalItemSpacing = 12.dp,
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag("category_images_grid")
@@ -382,9 +390,11 @@ fun SavedScreen(
         Spacer(modifier = Modifier.height(14.dp))
         Text(
             text = stringResource(R.string.saved_title),
-            style = MaterialTheme.typography.headlineSmall,
-            color = Color.White,
-            fontWeight = FontWeight.SemiBold
+            style = MaterialTheme.typography.headlineSmall.copy(
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            color = PrimaryText
         )
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -397,8 +407,8 @@ fun SavedScreen(
             LazyVerticalStaggeredGrid(
                 columns = StaggeredGridCells.Fixed(2),
                 contentPadding = PaddingValues(bottom = 104.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalItemSpacing = 16.dp,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalItemSpacing = 12.dp,
                 modifier = Modifier
                     .fillMaxSize()
                     .testTag("saved_posts_grid")
@@ -455,75 +465,71 @@ fun AiToolsScreen(
         contentPadding = PaddingValues(top = 14.dp, bottom = 104.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. Title "AI Tools"
+        // 1. Title "AI Tools" (24sp Bold)
         item {
             Text(
                 text = stringResource(R.string.ai_tools_title),
-                style = MaterialTheme.typography.headlineSmall,
-                color = Color.White,
-                fontWeight = FontWeight.SemiBold
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = PrimaryText
             )
         }
 
-        // 2. Pill-shaped Search Bar inside a 28dp rounded header container
+        // 2. Slim Search Bar (Height 54dp, Radius 20dp, Background #11164A, Border #252B69)
         item {
-            val searchCardShape = RoundedCornerShape(28.dp)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(searchCardShape)
-                    .background(PromptCardSurfaceBrush, searchCardShape)
-                    .border(1.dp, IndigoSoftBorder, searchCardShape)
-                    .padding(14.dp)
-            ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = {
-                        Text(
-                            text = stringResource(R.string.ai_tools_search_placeholder),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(
-                                onClick = { searchQuery = "" },
-                                modifier = Modifier.testTag("clear_ai_tools_search_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        } else {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = {
+                    Text(
+                        text = stringResource(R.string.ai_tools_search_placeholder),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = SecondaryText
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                        tint = SecondaryText,
+                        modifier = Modifier.size(20.dp)
+                    )
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(
+                            onClick = { searchQuery = "" },
+                            modifier = Modifier.testTag("clear_ai_tools_search_button")
+                        ) {
                             Icon(
-                                imageVector = Icons.Default.Search,
+                                imageVector = Icons.Default.Close,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = SecondaryText,
+                                modifier = Modifier.size(18.dp)
                             )
                         }
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(50),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AccentViolet,
-                        unfocusedBorderColor = IndigoSoftBorder,
-                        focusedContainerColor = IndigoSurfaceDark,
-                        unfocusedContainerColor = IndigoSurfaceDark,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("ai_tools_search_input")
-                )
-            }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(20.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = PrimaryPurple,
+                    unfocusedBorderColor = SubtleBorder,
+                    focusedContainerColor = CardBackground,
+                    unfocusedContainerColor = CardBackground,
+                    focusedTextColor = PrimaryText,
+                    unfocusedTextColor = PrimaryText
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(54.dp)
+                    .testTag("ai_tools_search_input")
+            )
         }
 
-        // 3. 28dp Rounded Section Card containing a 4-column grid of tools (or friendly rounded empty state)
+        // 3. 24dp Large Rounded Section Card containing a 4-column grid of tools
         item {
             if (filteredTools.isEmpty()) {
                 FriendlyRoundedEmptyCard(
@@ -535,13 +541,13 @@ fun AiToolsScreen(
                     }
                 )
             } else {
-                val sectionShape = RoundedCornerShape(28.dp)
+                val sectionShape = RoundedCornerShape(24.dp)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(sectionShape)
-                        .background(PromptCardSurfaceBrush, sectionShape)
-                        .border(1.dp, IndigoSoftBorder, sectionShape)
+                        .background(CardBackground, sectionShape)
+                        .border(1.dp, SubtleBorder, sectionShape)
                         .padding(horizontal = 16.dp, vertical = 20.dp)
                         .testTag("ai_tools_section_card")
                 ) {
@@ -665,14 +671,14 @@ internal fun FriendlyRoundedEmptyCard(
     message: String,
     modifier: Modifier = Modifier
 ) {
-    val shape = RoundedCornerShape(28.dp)
+    val shape = RoundedCornerShape(24.dp)
     Box(
         modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 24.dp)
             .clip(shape)
-            .background(PromptCardSurfaceBrush, shape)
-            .border(1.dp, IndigoSoftBorder, shape)
+            .background(CardBackground, shape)
+            .border(1.dp, SubtleBorder, shape)
             .padding(vertical = 48.dp, horizontal = 24.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -683,14 +689,14 @@ internal fun FriendlyRoundedEmptyCard(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                tint = SecondaryText.copy(alpha = 0.8f),
                 modifier = Modifier.size(44.dp)
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = message,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = SecondaryText,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center
             )

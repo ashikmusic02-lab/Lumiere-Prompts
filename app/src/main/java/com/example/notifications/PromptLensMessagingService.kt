@@ -35,7 +35,7 @@ class PromptLensMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         super.onNewToken(token)
         Log.d(TAG, "FCM registration token refreshed")
-        OneSignalDeepLinkManager.ensureSubscribedToAllTopic()
+        PromptLensDeepLinkManager.ensureSubscribedToAllTopic()
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
@@ -61,7 +61,7 @@ class PromptLensMessagingService : FirebaseMessagingService() {
 
         val imageIdValue = data["imageId"]?.takeIf { it.isNotBlank() }
             ?: data["image_id"]?.takeIf { it.isNotBlank() }
-            ?: OneSignalDeepLinkManager.extractImageIdFromLinkString(linkValue).orEmpty()
+            ?: PromptLensDeepLinkManager.extractImageIdFromLinkString(linkValue).orEmpty()
 
         showForegroundNotification(
             title = title,

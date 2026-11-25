@@ -50,9 +50,11 @@
 
     <!-- Comments & Moderation -->
     <string name="comments_header">মন্তব্য (%1$d)</string>
+    <string name="view_comments_count">মন্তব্য দেখুন (%1$d)</string>
+    <string name="sign_in_to_comment">মন্তব্য করতে সাইন ইন করুন</string>
     <string name="comment_placeholder">মন্তব্য লিখুন…</string>
     <string name="comment_respect_note">সম্মানজনক ভাষা ব্যবহার করুন। আপত্তিকর মন্তব্য মুছে ফেলা হবে।</string>
-    <string name="no_comments_yet">এখনও কোনো মন্তব্য নেই</string>
+    <string name="no_comments_yet">এখনও কোনো মন্তব্য নেই। প্রথম মন্তব্য করুন!</string>
     <string name="reply_from_promptlens">PromptLens থেকে উত্তর</string>
     <string name="delete_comment">মুছুন</string>
     <string name="report_comment">রিপোর্ট</string>
@@ -100,6 +102,8 @@
     <string name="terms_of_use_label">ব্যবহারের শর্তাবলী</string>
     <string name="about_label">অ্যাপ সম্পর্কে</string>
     <string name="about_version_format">ভার্সন %1$s</string>
+    <string name="about_support_email_format">সাপোর্ট: %1$s</string>
+    <string name="contact_us_label">যোগাযোগ করুন</string>
     <string name="contact_support_label">সাপোর্টে যোগাযোগ করুন</string>
     <string name="share_app_label">অ্যাপ শেয়ার করুন</string>
     <string name="rate_app_label">রেট করুন</string>

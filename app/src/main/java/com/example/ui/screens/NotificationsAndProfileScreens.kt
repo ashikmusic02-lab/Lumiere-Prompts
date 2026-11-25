@@ -12,7 +12,6 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -38,10 +37,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.CleaningServices
-import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
@@ -104,7 +101,6 @@ import com.example.ui.theme.BadgeTealCyan
 import com.example.ui.theme.BadgeVioletPurple
 import com.example.ui.theme.IndigoInnerBox
 import com.example.ui.theme.IndigoSoftBorder
-import com.example.ui.theme.IndigoSurfaceBottom
 import com.example.ui.theme.IndigoSurfaceTop
 import com.example.ui.theme.PromptAccentGradientBrush
 import com.example.ui.theme.PromptCardSurfaceBrush
@@ -310,14 +306,14 @@ private fun BroadcastNotificationCard(
         modifier = Modifier
             .fillMaxWidth()
             .shadow(
-                elevation = 8.dp,
-                shape = RoundedCornerShape(28.dp),
-                ambientColor = AccentViolet.copy(alpha = 0.18f),
-                spotColor = AccentBlue.copy(alpha = 0.2f)
+                elevation = 4.dp,
+                shape = RoundedCornerShape(24.dp),
+                ambientColor = Color.Black.copy(alpha = 0.2f),
+                spotColor = Color.Black.copy(alpha = 0.2f)
             )
-            .clip(RoundedCornerShape(28.dp))
+            .clip(RoundedCornerShape(24.dp))
             .background(PromptCardSurfaceBrush)
-            .border(1.dp, IndigoSoftBorder, RoundedCornerShape(28.dp))
+            .border(1.dp, IndigoSoftBorder, RoundedCornerShape(24.dp))
             .pressScaleClickable(onClick = onClick)
             .padding(16.dp)
             .testTag("notification_broadcast_${notif.id}")
@@ -410,14 +406,14 @@ private fun CommentReplyNotificationCard(
         modifier = Modifier
             .fillMaxWidth()
             .shadow(
-                elevation = 8.dp,
-                shape = RoundedCornerShape(28.dp),
-                ambientColor = AccentViolet.copy(alpha = 0.18f),
-                spotColor = AccentBlue.copy(alpha = 0.2f)
+                elevation = 4.dp,
+                shape = RoundedCornerShape(24.dp),
+                ambientColor = Color.Black.copy(alpha = 0.2f),
+                spotColor = Color.Black.copy(alpha = 0.2f)
             )
-            .clip(RoundedCornerShape(28.dp))
+            .clip(RoundedCornerShape(24.dp))
             .background(PromptCardSurfaceBrush)
-            .border(1.dp, IndigoSoftBorder, RoundedCornerShape(28.dp))
+            .border(1.dp, IndigoSoftBorder, RoundedCornerShape(24.dp))
             .pressScaleClickable(onClick = onClick)
             .padding(16.dp)
             .testTag("notification_reply_${comment.id}")
@@ -707,6 +703,15 @@ fun ProfileScreen(
         )
     }
 
+    val supportEmail = appConfigSettings.supportEmail.ifBlank {
+        AppLinks.SUPPORT_EMAIL
+    }
+    val appVersionName = remember(context) {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: BuildConfig.VERSION_NAME
+    }
+
     if (showAboutDialog) {
         AlertDialog(
             onDismissRequest = { showAboutDialog = false },
@@ -722,11 +727,19 @@ fun ProfileScreen(
                 )
             },
             text = {
-                Text(
-                    text = stringResource(R.string.about_version_format, BuildConfig.VERSION_NAME),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = TextLavenderGray
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = stringResource(R.string.about_version_format, appVersionName),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = TextPureWhite,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = stringResource(R.string.about_support_email_format, supportEmail),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextLavenderGray
+                    )
+                }
             },
             confirmButton = {
                 TextButton(onClick = { showAboutDialog = false }) {
@@ -800,26 +813,26 @@ fun ProfileScreen(
         Text(
             text = stringResource(R.string.profile_title),
             style = MaterialTheme.typography.headlineSmall.copy(
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 23.sp
+                fontWeight = FontWeight.Bold,
+                fontSize = 24.sp
             ),
             color = TextPureWhite
         )
 
-        // 1. Top Card (28dp rounded): Round avatar, name (or "Guest"), and a "Sign in with Google" pill button when not signed in
+        // 1. Top Card (24dp rounded): Round avatar, name (or "Guest"), and a "Sign in with Google" pill button when not signed in
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .shadow(
-                    elevation = 10.dp,
-                    shape = RoundedCornerShape(28.dp),
-                    ambientColor = AccentViolet.copy(alpha = 0.2f),
-                    spotColor = AccentBlue.copy(alpha = 0.22f)
+                    elevation = 4.dp,
+                    shape = RoundedCornerShape(24.dp),
+                    ambientColor = Color.Black.copy(alpha = 0.2f),
+                    spotColor = Color.Black.copy(alpha = 0.2f)
                 )
-                .clip(RoundedCornerShape(28.dp))
+                .clip(RoundedCornerShape(24.dp))
                 .background(PromptCardSurfaceBrush)
-                .border(1.dp, IndigoSoftBorder, RoundedCornerShape(28.dp))
-                .padding(horizontal = 24.dp, vertical = 24.dp)
+                .border(1.dp, IndigoSoftBorder, RoundedCornerShape(24.dp))
+                .padding(horizontal = 24.dp, vertical = 22.dp)
         ) {
             val photoUrl = if (isSignedInWithGoogle) firebaseUser?.photoUrl?.toString().orEmpty() else ""
             val displayName = if (isSignedInWithGoogle) {
@@ -834,13 +847,13 @@ fun ProfileScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Round avatar with glowing accent ring
+                // Round avatar with accent ring
                 Box(
                     modifier = Modifier
-                        .size(88.dp)
+                        .size(84.dp)
                         .clip(CircleShape)
                         .background(PromptAccentGradientBrush)
-                        .padding(3.dp)
+                        .padding(2.5.dp)
                         .clip(CircleShape)
                         .background(IndigoInnerBox),
                     contentAlignment = Alignment.Center
@@ -859,7 +872,7 @@ fun ProfileScreen(
                             imageVector = Icons.Default.AccountCircle,
                             contentDescription = displayName,
                             tint = TextLavenderGray,
-                            modifier = Modifier.size(56.dp)
+                            modifier = Modifier.size(54.dp)
                         )
                     }
                 }
@@ -867,8 +880,8 @@ fun ProfileScreen(
                 Text(
                     text = displayName,
                     style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 21.sp
                     ),
                     color = TextPureWhite,
                     textAlign = TextAlign.Center
@@ -888,14 +901,14 @@ fun ProfileScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(50.dp)
+                            .height(52.dp)
                             .shadow(
-                                elevation = 10.dp,
-                                shape = RoundedCornerShape(50),
-                                ambientColor = AccentViolet.copy(alpha = 0.4f),
-                                spotColor = AccentBlue.copy(alpha = 0.4f)
+                                elevation = 6.dp,
+                                shape = RoundedCornerShape(28.dp),
+                                ambientColor = AccentViolet.copy(alpha = 0.25f),
+                                spotColor = AccentBlue.copy(alpha = 0.25f)
                             )
-                            .clip(RoundedCornerShape(50))
+                            .clip(RoundedCornerShape(28.dp))
                             .background(PromptAccentGradientBrush)
                             .pressScaleClickable(onClick = onSignInClick)
                             .testTag("profile_google_sign_in_button"),
@@ -903,30 +916,30 @@ fun ProfileScreen(
                     ) {
                         Text(
                             text = stringResource(R.string.sign_in_with_google),
-                            style = MaterialTheme.typography.titleSmall.copy(
+                            style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 15.sp
+                                fontSize = 16.sp
                             ),
-                            color = TextPureWhite
+                            color = Color.White
                         )
                     }
                 }
             }
         }
 
-        // 2. First Grouped Rounded Card (28dp): Notifications, Language
+        // 2. First Grouped Rounded Card (24dp): Notifications, Language
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .shadow(
-                    elevation = 8.dp,
-                    shape = RoundedCornerShape(28.dp),
-                    ambientColor = AccentViolet.copy(alpha = 0.16f),
-                    spotColor = AccentBlue.copy(alpha = 0.18f)
+                    elevation = 4.dp,
+                    shape = RoundedCornerShape(24.dp),
+                    ambientColor = Color.Black.copy(alpha = 0.18f),
+                    spotColor = Color.Black.copy(alpha = 0.18f)
                 )
-                .clip(RoundedCornerShape(28.dp))
+                .clip(RoundedCornerShape(24.dp))
                 .background(PromptCardSurfaceBrush)
-                .border(1.dp, IndigoSoftBorder, RoundedCornerShape(28.dp))
+                .border(1.dp, IndigoSoftBorder, RoundedCornerShape(24.dp))
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 ProfileMenuRow(
@@ -958,19 +971,19 @@ fun ProfileScreen(
             }
         }
 
-        // 3. Second Grouped Rounded Card (28dp): Share app, Rate us, Privacy policy, Terms of use, About
+        // 3. Second Grouped Rounded Card (24dp): Share app, Rate us, Contact us, Privacy policy, Terms of use, About
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .shadow(
-                    elevation = 8.dp,
-                    shape = RoundedCornerShape(28.dp),
-                    ambientColor = AccentViolet.copy(alpha = 0.16f),
-                    spotColor = AccentBlue.copy(alpha = 0.18f)
+                    elevation = 4.dp,
+                    shape = RoundedCornerShape(24.dp),
+                    ambientColor = Color.Black.copy(alpha = 0.18f),
+                    spotColor = Color.Black.copy(alpha = 0.18f)
                 )
-                .clip(RoundedCornerShape(28.dp))
+                .clip(RoundedCornerShape(24.dp))
                 .background(PromptCardSurfaceBrush)
-                .border(1.dp, IndigoSoftBorder, RoundedCornerShape(28.dp))
+                .border(1.dp, IndigoSoftBorder, RoundedCornerShape(24.dp))
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 // Share app
@@ -1012,16 +1025,54 @@ fun ProfileScreen(
                     modifier = Modifier.padding(horizontal = 20.dp)
                 )
 
-                // Privacy policy
+                // Contact us
                 ProfileMenuRow(
-                    icon = Icons.Default.Policy,
-                    badgeColor = BadgeShieldGreen,
-                    label = stringResource(R.string.privacy_policy_label),
-                    testTag = "profile_row_privacy_policy",
+                    icon = Icons.Default.Email,
+                    badgeColor = BadgeVioletPurple,
+                    label = stringResource(R.string.contact_us_label),
+                    testTag = "profile_row_contact_us",
                     onClick = {
-                        openInAppCustomTab(context, AppLinks.PRIVACY_POLICY_URL)
+                        val subject = Uri.encode("PromptLens support")
+                        val mailtoUri = Uri.parse("mailto:${supportEmail.trim()}?subject=$subject")
+                        val emailIntent = Intent(Intent.ACTION_SENDTO, mailtoUri).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        runCatching {
+                            context.startActivity(emailIntent)
+                        }.onFailure {
+                            val fallbackIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "message/rfc822"
+                                putExtra(Intent.EXTRA_EMAIL, arrayOf(supportEmail.trim()))
+                                putExtra(Intent.EXTRA_SUBJECT, "PromptLens support")
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            runCatching {
+                                context.startActivity(Intent.createChooser(fallbackIntent, null).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                })
+                            }
+                        }
                     }
                 )
+
+                // Privacy policy (hidden while PRIVACY_POLICY_URL is blank)
+                if (AppLinks.PRIVACY_POLICY_URL.isNotBlank()) {
+                    HorizontalDivider(
+                        color = IndigoSoftBorder,
+                        thickness = 0.8.dp,
+                        modifier = Modifier.padding(horizontal = 20.dp)
+                    )
+
+                    ProfileMenuRow(
+                        icon = Icons.Default.Policy,
+                        badgeColor = BadgeShieldGreen,
+                        label = stringResource(R.string.privacy_policy_label),
+                        testTag = "profile_row_privacy_policy",
+                        onClick = {
+                            openInAppCustomTab(context, AppLinks.PRIVACY_POLICY_URL)
+                        }
+                    )
+                }
 
                 HorizontalDivider(
                     color = IndigoSoftBorder,
@@ -1049,7 +1100,7 @@ fun ProfileScreen(
                     icon = Icons.Default.Favorite,
                     badgeColor = BadgeSkyBlue,
                     label = stringResource(R.string.about_label),
-                    trailingText = BuildConfig.VERSION_NAME,
+                    trailingText = appVersionName,
                     testTag = "profile_row_about",
                     onClick = { showAboutDialog = true }
                 )

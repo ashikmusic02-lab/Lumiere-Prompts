@@ -9,24 +9,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 private val PromptLensDarkColorScheme = darkColorScheme(
-    primary = AccentViolet,
+    primary = PrimaryPurple,
     onPrimary = Color.White,
-    primaryContainer = PromptVioletContainer,
-    onPrimaryContainer = Color.White,
-    secondary = AccentBlue,
+    primaryContainer = ElevatedSurface,
+    onPrimaryContainer = PrimaryText,
+    secondary = SecondaryBlue,
     onSecondary = Color.White,
     secondaryContainer = PromptCyanContainer,
-    onSecondaryContainer = Color(0xFFE0F2FE),
-    tertiary = PromptGoldAccent,
-    onTertiary = Color(0xFF1F1600),
-    background = NavyIndigoBgTop,
-    onBackground = DarkTextPrimary,
-    surface = IndigoSurfaceDark,
-    onSurface = DarkTextPrimary,
-    surfaceVariant = IndigoSurfaceLight,
-    onSurfaceVariant = DarkTextSecondary,
-    outline = IndigoBorderBase,
-    outlineVariant = IndigoSoftBorder,
+    onSecondaryContainer = PrimaryText,
+    tertiary = AccentCyan,
+    onTertiary = MainBackground,
+    background = MainBackground,
+    onBackground = PrimaryText,
+    surface = CardBackground,
+    onSurface = PrimaryText,
+    surfaceVariant = ElevatedSurface,
+    onSurfaceVariant = SecondaryText,
+    outline = SubtleBorder,
+    outlineVariant = SubtleBorder,
     error = CrimsonError,
     onError = Color.White
 )
@@ -34,8 +34,8 @@ private val PromptLensDarkColorScheme = darkColorScheme(
 val PromptLensShapes = Shapes(
     extraSmall = RoundedCornerShape(14.dp),
     small = RoundedCornerShape(18.dp),
-    medium = RoundedCornerShape(22.dp),
-    large = RoundedCornerShape(28.dp),
+    medium = RoundedCornerShape(20.dp),
+    large = RoundedCornerShape(24.dp),
     extraLarge = RoundedCornerShape(28.dp)
 )
 

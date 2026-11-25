@@ -9,6 +9,11 @@ import android.os.Build
 import android.os.PersistableBundle
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,11 +28,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -42,28 +51,34 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Comment
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -78,14 +93,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -103,17 +119,31 @@ import com.example.ui.components.formatCompactCount
 import com.example.ui.components.openInAppCustomTab
 import com.example.ui.components.pressScaleClickable
 import com.example.ui.components.rememberShimmerBrush
-import com.example.ui.theme.AccentBlue
+import com.example.ui.theme.AccentCyan
 import com.example.ui.theme.AccentViolet
+import com.example.ui.theme.ActionBookmarkContainer
+import com.example.ui.theme.ActionBookmarkIcon
+import com.example.ui.theme.ActionCommentContainer
+import com.example.ui.theme.ActionLikeContainer
+import com.example.ui.theme.ActionLikeIcon
+import com.example.ui.theme.ActionShareContainer
+import com.example.ui.theme.CardBackground
+import com.example.ui.theme.ElevatedSurface
 import com.example.ui.theme.HeartLikeRed
-import com.example.ui.theme.IndigoBorderBase
+import com.example.ui.theme.InactiveChipText
 import com.example.ui.theme.IndigoInnerBox
 import com.example.ui.theme.IndigoSoftBorder
 import com.example.ui.theme.IndigoSurfaceDark
+import com.example.ui.theme.IndigoSurfaceTop
+import com.example.ui.theme.MainBackground
+import com.example.ui.theme.PrimaryPurple
+import com.example.ui.theme.PrimaryText
 import com.example.ui.theme.PromptAccentGradientBrush
-import com.example.ui.theme.PromptCardSurfaceBrush
-import com.example.ui.theme.PromptGoldAccent
+import com.example.ui.theme.SecondaryBackground
+import com.example.ui.theme.SecondaryBlue
+import com.example.ui.theme.SubtleBorder
 import com.example.ui.theme.TextLavenderGray
+import com.example.ui.theme.TextLavenderMuted
 import com.example.ui.theme.TextPureWhite
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -127,6 +157,7 @@ private fun isRealCategory(raw: String): Boolean {
         !cleaned.equals("অন্যান্য", ignoreCase = true)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImageDetailScreen(
     image: InspirationImage,
@@ -158,10 +189,11 @@ fun ImageDetailScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    val commentsListState = rememberLazyListState()
 
     var promptRevealed by rememberSaveable(image.id) { mutableStateOf(false) }
     var isWaitingForAdToFinish by remember(image.id) { mutableStateOf(false) }
-    var commentsExpanded by rememberSaveable(image.id) { mutableStateOf(false) }
+    var showCommentsSheet by rememberSaveable(image.id) { mutableStateOf(false) }
     var commentDraft by rememberSaveable(image.id) { mutableStateOf("") }
     var isCommentInputFocused by remember { mutableStateOf(false) }
     var commentToReport by remember { mutableStateOf<ImageComment?>(null) }
@@ -170,6 +202,30 @@ fun ImageDetailScreen(
 
     val copiedMsg = stringResource(R.string.copied_message)
     val appName = stringResource(R.string.app_name)
+
+    // Springy like-button pop animation when isLiked transitions to true
+    val likePopScale = remember { Animatable(1f) }
+    var previousLiked by remember(image.id) { mutableStateOf(isLiked) }
+    LaunchedEffect(isLiked) {
+        if (isLiked && !previousLiked) {
+            likePopScale.snapTo(0.82f)
+            likePopScale.animateTo(
+                targetValue = 1.26f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioLowBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            )
+            likePopScale.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            )
+        }
+        previousLiked = isLiked
+    }
 
     LaunchedEffect(image.id) {
         promptRevealed = false
@@ -193,7 +249,7 @@ fun ImageDetailScreen(
         AdMobManager.onDetailScreenExited(
             context = context,
             settings = advertisementSettings,
-            isCommentInputActive = isCommentInputFocused
+            isCommentInputActive = isCommentInputFocused || showCommentsSheet
         )
         onBack()
     }
@@ -215,11 +271,13 @@ fun ImageDetailScreen(
             .sortedBy { it.sortOrder }
     }
 
+    val commentCount = maxOf(image.commentCount, comments.size.toLong())
+
     // Report Comment Dialog
     commentToReport?.let { targetComment ->
         AlertDialog(
             onDismissRequest = { commentToReport = null },
-            containerColor = IndigoSurfaceDark,
+            containerColor = IndigoSurfaceTop,
             shape = RoundedCornerShape(28.dp),
             title = {
                 Text(
@@ -260,7 +318,263 @@ fun ImageDetailScreen(
         )
     }
 
-    val safeAspectRatio = image.aspectRatio.toFloat().coerceIn(0.68f, 1.35f)
+    // ModalBottomSheet for Comments (~60% partial height, expandable to full height by dragging, keyboard-safe)
+    if (showCommentsSheet && appConfigSettings.allowComments) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+        ModalBottomSheet(
+            onDismissRequest = {
+                isCommentInputFocused = false
+                showCommentsSheet = false
+            },
+            sheetState = sheetState,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            containerColor = IndigoSurfaceTop,
+            contentColor = TextPureWhite,
+            tonalElevation = 12.dp,
+            scrimColor = Color(0xAA040210),
+            contentWindowInsets = { WindowInsets(0, 0, 0, 0) }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.92f)
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .testTag("comments_bottom_sheet")
+            ) {
+                // Sheet Header: Title "Comments (N)" + Close button
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 20.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.comments_header, commentCount.toInt()),
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp
+                            ),
+                            color = TextPureWhite
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = stringResource(R.string.comment_respect_note),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextLavenderMuted
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            isCommentInputFocused = false
+                            showCommentsSheet = false
+                        },
+                        modifier = Modifier.testTag("close_comments_sheet_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = stringResource(R.string.back_action),
+                            tint = TextLavenderGray
+                        )
+                    }
+                }
+
+                HorizontalDivider(
+                    color = IndigoSoftBorder,
+                    thickness = 0.8.dp
+                )
+
+                // Scrollable List of Comments (newest first) or Friendly Empty State
+                if (comments.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape)
+                                    .background(AccentViolet.copy(alpha = 0.16f))
+                                    .border(1.dp, IndigoSoftBorder, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Comment,
+                                    contentDescription = null,
+                                    tint = TextLavenderGray,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                            Text(
+                                text = stringResource(R.string.no_comments_yet),
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = TextLavenderGray,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.testTag("empty_comments_text")
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        state = commentsListState,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .testTag("comments_sheet_list"),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(
+                            items = comments,
+                            key = { comment -> comment.id }
+                        ) { comment ->
+                            CommentRowItem(
+                                comment = comment,
+                                isOwnComment = !currentUserId.isNullOrBlank() && comment.userId == currentUserId,
+                                onDelete = { onDeleteComment(comment) },
+                                onReport = {
+                                    reportReasonText = defaultReportReason
+                                    commentToReport = comment
+                                },
+                                onBlockUser = { onBlockUser(comment.userId) }
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(
+                    color = IndigoSoftBorder,
+                    thickness = 0.8.dp
+                )
+
+                // Pinned Input Row at the bottom of the sheet (moves directly above the keyboard)
+                Surface(
+                    color = IndigoSurfaceDark,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (!isRealUser) {
+                        // Guest user: show "Sign in to comment" button; tapping it starts Google sign-in
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(50.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(PromptAccentGradientBrush, RoundedCornerShape(50))
+                                    .border(1.dp, Color.White.copy(alpha = 0.24f), RoundedCornerShape(50))
+                                    .pressScaleClickable {
+                                        onRequireSignIn {}
+                                    }
+                                    .testTag("sign_in_to_comment_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Person,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.sign_in_to_comment),
+                                        style = MaterialTheme.typography.titleSmall.copy(
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 15.sp
+                                        ),
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = commentDraft,
+                                onValueChange = { commentDraft = it },
+                                placeholder = {
+                                    Text(
+                                        text = stringResource(R.string.comment_placeholder),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = TextLavenderGray
+                                    )
+                                },
+                                maxLines = 4,
+                                shape = RoundedCornerShape(24.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = AccentViolet,
+                                    unfocusedBorderColor = IndigoSoftBorder,
+                                    focusedContainerColor = IndigoInnerBox,
+                                    unfocusedContainerColor = IndigoInnerBox,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .onFocusChanged { focusState ->
+                                        isCommentInputFocused = focusState.isFocused
+                                    }
+                                    .testTag("comment_input_field")
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .background(PromptAccentGradientBrush, CircleShape)
+                                    .pressScaleClickable {
+                                        val textToSend = commentDraft.trim()
+                                        if (textToSend.isNotEmpty()) {
+                                            onPostComment(textToSend)
+                                            commentDraft = ""
+                                            coroutineScope.launch {
+                                                commentsListState.animateScrollToItem(0)
+                                            }
+                                        }
+                                    }
+                                    .testTag("send_comment_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = stringResource(R.string.submit_action),
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    val safeAspectRatio = remember(image.aspectRatio) {
+        val raw = image.aspectRatio.toFloat()
+        if (raw in 0.65f..1.35f) raw else 0.8f
+    }
     val hasBannerSlotConfigured = remember(advertisementSettings) {
         advertisementSettings.allAdsEnabled &&
             advertisementSettings.detailBannerEnabled &&
@@ -301,15 +615,15 @@ fun ImageDetailScreen(
             .fillMaxSize()
             .testTag("image_detail_screen")
     ) {
-        // 1. Slim floating top bar pinned at the top (20dp rounded, 1dp soft border) with one round back button. It never scrolls away.
+        // 1. Slim floating top bar pinned at the top (20dp rounded, 1dp subtle border) with one round back button.
         Surface(
             shape = RoundedCornerShape(20.dp),
-            color = IndigoSurfaceDark,
-            border = BorderStroke(1.dp, IndigoSoftBorder),
-            shadowElevation = 8.dp,
+            color = SecondaryBackground,
+            border = BorderStroke(1.dp, SubtleBorder),
+            shadowElevation = 2.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
             Row(
                 modifier = Modifier
@@ -319,10 +633,10 @@ fun ImageDetailScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(38.dp)
                         .clip(CircleShape)
-                        .background(PromptCardSurfaceBrush, CircleShape)
-                        .border(1.dp, IndigoSoftBorder, CircleShape)
+                        .background(CardBackground, CircleShape)
+                        .border(1.dp, SubtleBorder, CircleShape)
                         .pressScaleClickable(onClick = handleExit)
                         .testTag("detail_back_button"),
                     contentAlignment = Alignment.Center
@@ -330,7 +644,7 @@ fun ImageDetailScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = stringResource(R.string.back_action),
-                        tint = Color.White,
+                        tint = PrimaryText,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -342,38 +656,30 @@ fun ImageDetailScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
-            contentPadding = PaddingValues(top = 6.dp, bottom = 36.dp),
+            contentPadding = PaddingValues(top = 4.dp, bottom = 36.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 2. Image centered, full width minus 16dp, 28dp rounded, soft glow. Nothing drawn on top of the image.
+            // 2. Image Preview: ~93% of screen width, displayed according to aspect ratio, 20dp corner radius, no overlay
             item {
-                val imageShape = RoundedCornerShape(28.dp)
-                val glowRimBrush = Brush.linearGradient(
-                    colors = listOf(
-                        AccentViolet.copy(alpha = 0.55f),
-                        IndigoBorderBase.copy(alpha = 0.65f),
-                        AccentBlue.copy(alpha = 0.55f)
-                    )
-                )
+                val imageShape = RoundedCornerShape(20.dp)
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 240.dp, max = 380.dp)
+                            .fillMaxWidth(0.93f)
+                            .heightIn(min = 260.dp, max = 460.dp)
                             .aspectRatio(safeAspectRatio)
                             .shadow(
-                                elevation = 16.dp,
+                                elevation = 6.dp,
                                 shape = imageShape,
-                                ambientColor = AccentViolet.copy(alpha = 0.35f),
-                                spotColor = AccentBlue.copy(alpha = 0.35f)
+                                ambientColor = Color.Black.copy(alpha = 0.25f),
+                                spotColor = Color.Black.copy(alpha = 0.25f)
                             )
                             .clip(imageShape)
-                            .border(1.5.dp, glowRimBrush, imageShape)
+                            .background(CardBackground, imageShape)
+                            .border(1.dp, SubtleBorder, imageShape)
                     ) {
                         LumiereExternalImage(
                             imageUrl = image.imageUrl,
@@ -385,40 +691,42 @@ fun ImageDetailScreen(
                 }
             }
 
-            // 3. Large 28dp rounded card below the image:
-            //    - Post title (large, semibold, 22sp+)
-            //    - Category pill ONLY when the post has a real category (hide for blank/"uncategorized"/"অন্যান্য")
-            //    - Action row: exactly 4 round buttons in order left to right: Like, Comment, Share, Save (NO copy button in this row)
-            //    - "Get Prompt" button (or, after reveal, darker inner rounded prompt box with "Prompt" left label + top-right light "Copy" chip + ~3-line scrollable text, and AI tool chips below it)
+            // 3. Details Card: Background #11164A, Border #252B69, Corner Radius 24dp, Padding 18dp
             item {
-                val mainCardShape = RoundedCornerShape(28.dp)
+                val mainCardShape = RoundedCornerShape(24.dp)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
                         .shadow(
-                            elevation = 10.dp,
+                            elevation = 4.dp,
                             shape = mainCardShape,
-                            ambientColor = AccentViolet.copy(alpha = 0.22f),
-                            spotColor = AccentBlue.copy(alpha = 0.22f)
+                            ambientColor = Color.Black.copy(alpha = 0.2f),
+                            spotColor = Color.Black.copy(alpha = 0.2f)
                         )
                         .clip(mainCardShape)
-                        .background(PromptCardSurfaceBrush, mainCardShape)
-                        .border(1.dp, IndigoSoftBorder, mainCardShape)
-                        .padding(20.dp)
+                        .background(CardBackground, mainCardShape)
+                        .border(1.dp, SubtleBorder, mainCardShape)
+                        .animateContentSize(
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessMediumLow
+                            )
+                        )
+                        .padding(18.dp)
                         .testTag("prompt_display_card")
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        // Post Title (large, semibold, 22sp+)
+                        // Image Title: 22sp (21–23sp), SemiBold, #F5F6FF
                         if (image.title.isNotBlank()) {
                             Text(
                                 text = image.title,
                                 fontSize = 22.sp,
                                 lineHeight = 29.sp,
-                                color = TextPureWhite,
+                                color = PrimaryText,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -426,74 +734,64 @@ fun ImageDetailScreen(
                         // Category Pill ONLY when the post has a real category (hidden for blank/"uncategorized"/"অন্যান্য")
                         if (hasValidCategory) {
                             Surface(
-                                shape = RoundedCornerShape(50),
-                                color = AccentViolet.copy(alpha = 0.18f),
-                                border = BorderStroke(1.dp, AccentViolet.copy(alpha = 0.45f))
+                                shape = RoundedCornerShape(22.dp),
+                                color = ElevatedSurface,
+                                border = BorderStroke(1.dp, SubtleBorder)
                             ) {
                                 Text(
                                     text = image.categoryName.trim(),
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = TextPureWhite,
-                                    fontWeight = FontWeight.SemiBold,
+                                    color = PrimaryText,
+                                    fontWeight = FontWeight.Medium,
                                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                                 )
                             }
                         }
 
-                        // Action row: EXACTLY 4 round buttons in this order left to right:
-                        // 1. Like (heart, solid red #FF3B5C when liked)
-                        // 2. Comment
-                        // 3. Share
-                        // 4. Save
-                        // NO copy button in this row.
-                        val commentCount = maxOf(image.commentCount, comments.size.toLong())
+                        // Action Buttons Row: Like (Soft Pink), Comment (Aqua Cyan), Share (Blue), Bookmark (Lavender)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 2.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // 1. Like
+                            // 1. Like (Soft Pink Accent)
                             RoundActionIconButton(
                                 icon = if (isLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
                                 contentDescription = stringResource(R.string.like_action),
-                                containerColor = if (isLiked) HeartLikeRed.copy(alpha = 0.24f) else Color(0xFF361539),
-                                iconTint = if (isLiked) HeartLikeRed else Color.White,
-                                borderColor = if (isLiked) HeartLikeRed.copy(alpha = 0.75f) else HeartLikeRed.copy(alpha = 0.35f),
+                                containerColor = if (isLiked) HeartLikeRed.copy(alpha = 0.22f) else ActionLikeContainer,
+                                iconTint = if (isLiked) HeartLikeRed else ActionLikeIcon,
+                                borderColor = if (isLiked) HeartLikeRed.copy(alpha = 0.65f) else ActionLikeIcon.copy(alpha = 0.32f),
                                 countText = image.likeCount.takeIf { it > 0L }?.let(::formatCompactCount),
+                                iconScale = likePopScale.value,
                                 testTag = "detail_like_button",
                                 onClick = onToggleLike
                             )
 
-                            // 2. Comment
+                            // 2. Comment (Aqua Cyan Accent) -> opens ModalBottomSheet
                             RoundActionIconButton(
                                 icon = Icons.AutoMirrored.Filled.Comment,
                                 contentDescription = stringResource(R.string.comments_header, commentCount.toInt()),
-                                containerColor = Color(0xFF123652),
-                                iconTint = Color(0xFF2DD4BF),
-                                borderColor = Color(0xFF2DD4BF).copy(alpha = 0.38f),
+                                containerColor = ActionCommentContainer,
+                                iconTint = AccentCyan,
+                                borderColor = AccentCyan.copy(alpha = 0.32f),
                                 countText = commentCount.takeIf { it > 0L }?.let(::formatCompactCount),
                                 testTag = "detail_comments_action_button",
                                 onClick = {
                                     if (appConfigSettings.allowComments) {
-                                        commentsExpanded = !commentsExpanded
-                                        if (commentsExpanded) {
-                                            coroutineScope.launch {
-                                                listState.animateScrollToItem(if (hasBannerSlotConfigured) 3 else 2)
-                                            }
-                                        }
+                                        showCommentsSheet = true
                                     }
                                 }
                             )
 
-                            // 3. Share
+                            // 3. Share (Blue Accent)
                             RoundActionIconButton(
                                 icon = Icons.Default.Share,
                                 contentDescription = stringResource(R.string.share_action),
-                                containerColor = Color(0xFF14355E),
-                                iconTint = Color(0xFF60A5FA),
-                                borderColor = Color(0xFF60A5FA).copy(alpha = 0.38f),
+                                containerColor = ActionShareContainer,
+                                iconTint = SecondaryBlue,
+                                borderColor = SecondaryBlue.copy(alpha = 0.32f),
                                 countText = null,
                                 testTag = "detail_share_post_button",
                                 onClick = {
@@ -510,40 +808,77 @@ fun ImageDetailScreen(
                                 }
                             )
 
-                            // 4. Save
+                            // 4. Bookmark (Lavender Accent)
                             RoundActionIconButton(
                                 icon = if (isFavorited) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
                                 contentDescription = stringResource(R.string.save_action),
-                                containerColor = if (isFavorited) AccentViolet.copy(alpha = 0.28f) else Color(0xFF23185B),
-                                iconTint = if (isFavorited) AccentViolet else TextLavenderGray,
-                                borderColor = if (isFavorited) AccentViolet.copy(alpha = 0.75f) else AccentViolet.copy(alpha = 0.38f),
+                                containerColor = if (isFavorited) PrimaryPurple.copy(alpha = 0.25f) else ActionBookmarkContainer,
+                                iconTint = if (isFavorited) PrimaryText else ActionBookmarkIcon,
+                                borderColor = if (isFavorited) PrimaryPurple.copy(alpha = 0.68f) else ActionBookmarkIcon.copy(alpha = 0.34f),
                                 countText = null,
                                 testTag = "detail_save_button",
                                 onClick = onToggleFavorite
                             )
                         }
 
-                        // 4 & 5. Before Get Prompt is tapped: show ONLY the "Get Prompt" button.
-                        //        NO copy control and NO AI tool chips are visible anywhere before reveal.
+                        // View Comments Row: Background #080B2A, Text #B8BCE0, Comment Icon #21D6E8, Radius 14dp, Height 44dp (42–46dp)
+                        if (appConfigSettings.allowComments) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(MainBackground, RoundedCornerShape(14.dp))
+                                    .border(1.dp, SubtleBorder, RoundedCornerShape(14.dp))
+                                    .pressScaleClickable { showCommentsSheet = true }
+                                    .padding(horizontal = 14.dp)
+                                    .testTag("comments_collapse_header"),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.Comment,
+                                        contentDescription = null,
+                                        tint = AccentCyan,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.view_comments_count, commentCount.toInt()),
+                                        style = MaterialTheme.typography.labelLarge.copy(
+                                            fontWeight = FontWeight.Medium,
+                                            fontSize = 13.5.sp
+                                        ),
+                                        color = InactiveChipText
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = InactiveChipText,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        // Get Prompt Button: Full Width, Height 56dp (54–58dp), Gradient #713CFF → #258BFF, White 17sp SemiBold text, Sparkles icon, Radius 28dp, light purple-blue shadow
                         if (!isPromptUnlockedOrRevealed) {
-                            val pillShape = RoundedCornerShape(50)
+                            val buttonShape = RoundedCornerShape(28.dp)
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(56.dp)
                                     .shadow(
-                                        elevation = 14.dp,
-                                        shape = pillShape,
-                                        ambientColor = AccentViolet.copy(alpha = 0.45f),
-                                        spotColor = AccentBlue.copy(alpha = 0.45f)
+                                        elevation = 8.dp,
+                                        shape = buttonShape,
+                                        ambientColor = PrimaryPurple.copy(alpha = 0.25f),
+                                        spotColor = SecondaryBlue.copy(alpha = 0.25f)
                                     )
-                                    .clip(pillShape)
-                                    .background(PromptAccentGradientBrush, pillShape)
-                                    .border(
-                                        1.dp,
-                                        Color.White.copy(alpha = 0.28f),
-                                        pillShape
-                                    )
+                                    .clip(buttonShape)
+                                    .background(PromptAccentGradientBrush, buttonShape)
                                     .pressScaleClickable(onClick = handleGetPromptOrSignIn)
                                     .testTag("get_prompt_button"),
                                 contentAlignment = Alignment.Center
@@ -555,173 +890,174 @@ fun ImageDetailScreen(
                                     Icon(
                                         imageVector = Icons.Default.AutoAwesome,
                                         contentDescription = null,
-                                        tint = PromptGoldAccent,
-                                        modifier = Modifier.size(22.dp)
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
                                     )
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Text(
                                         text = stringResource(R.string.get_prompt_action),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = Color.White,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            }
-                        } else {
-                            // 6. After the prompt is revealed:
-                            //    - Darker inner rounded prompt box with a header showing ONLY a clean styled text label
-                            //      "Prompt" (Bangla "প্রম্পট", soft lavender, semibold, NO icon) on the left and a small
-                            //      rounded light "Copy" chip (copy icon + dark text "Copy"/"কপি") in the TOP-RIGHT corner.
-                            //      No view-count in this header.
-                            //    - The box shows about 3 lines and scrolls inside.
-                            //    - Tapping the Copy chip or the text copies the FULL prompt with sensitive ClipData and shows
-                            //      ONLY a small themed in-app snackbar "Copied" ("কপি হয়েছে") for about 2 seconds.
-                            val innerShape = RoundedCornerShape(22.dp)
-                            val copyFullPromptToClipboard: () -> Unit = {
-                                if (!activePromptText.isNullOrBlank()) {
-                                    copyToClipboard(context, activePromptText)
-                                    onEmitMessage(copiedMsg)
-                                }
-                            }
-
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(innerShape)
-                                    .background(IndigoInnerBox, innerShape)
-                                    .border(1.dp, IndigoSoftBorder, innerShape)
-                                    .padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                // Header: "Prompt" ("প্রম্পট", soft lavender, semibold, NO icon) on the left,
-                                // small rounded light "Copy" chip (copy icon + dark text "Copy"/"কপি") on the top-right.
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.prompt_heading),
-                                        style = MaterialTheme.typography.titleSmall.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize = 15.sp
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontSize = 17.sp,
+                                            fontWeight = FontWeight.SemiBold
                                         ),
-                                        color = TextLavenderGray
+                                        color = Color.White
                                     )
+                                }
+                            }
+                        }
 
+                        // 6. AnimatedVisibility for the prompt reveal
+                        AnimatedVisibility(
+                            visible = isPromptUnlockedOrRevealed,
+                            enter = fadeIn(animationSpec = tween(220)) + expandVertically(animationSpec = tween(220)),
+                            exit = fadeOut(animationSpec = tween(160)) + shrinkVertically(animationSpec = tween(160))
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                val innerShape = RoundedCornerShape(22.dp)
+                                val copyFullPromptToClipboard: () -> Unit = {
                                     if (!activePromptText.isNullOrBlank()) {
-                                        val copyChipShape = RoundedCornerShape(50)
-                                        Row(
-                                            modifier = Modifier
-                                                .clip(copyChipShape)
-                                                .background(Color(0xFFF3E8FF), copyChipShape)
-                                                .border(1.dp, Color.White, copyChipShape)
-                                                .pressScaleClickable(onClick = copyFullPromptToClipboard)
-                                                .padding(horizontal = 12.dp, vertical = 6.dp)
-                                                .testTag("copy_prompt_button"),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.ContentCopy,
-                                                contentDescription = stringResource(R.string.copy_action),
-                                                tint = Color(0xFF120C4A),
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Text(
-                                                text = stringResource(R.string.copy_action),
-                                                style = MaterialTheme.typography.labelMedium.copy(
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 12.5.sp
-                                                ),
-                                                color = Color(0xFF120C4A),
-                                                maxLines = 1
-                                            )
-                                        }
+                                        copyToClipboard(context, activePromptText)
+                                        onEmitMessage(copiedMsg)
                                     }
                                 }
 
-                                when {
-                                    !activePromptText.isNullOrBlank() -> {
-                                        val promptScrollState = rememberScrollState()
-                                        // Compact ~3-line scrollable prompt box; tapping copies the FULL prompt
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(74.dp)
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .clickable { copyFullPromptToClipboard() }
-                                                .verticalScroll(promptScrollState)
-                                                .padding(vertical = 2.dp)
-                                                .testTag("prompt_selectable_text")
-                                        ) {
-                                            Text(
-                                                text = activePromptText,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                lineHeight = 22.sp,
-                                                color = Color.White.copy(alpha = 0.94f)
-                                            )
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(innerShape)
+                                        .background(IndigoInnerBox, innerShape)
+                                        .border(1.dp, IndigoSoftBorder, innerShape)
+                                        .padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.prompt_heading),
+                                            style = MaterialTheme.typography.titleSmall.copy(
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 15.sp
+                                            ),
+                                            color = TextLavenderGray
+                                        )
+
+                                        if (!activePromptText.isNullOrBlank()) {
+                                            val copyChipShape = RoundedCornerShape(50)
+                                            Row(
+                                                modifier = Modifier
+                                                    .clip(copyChipShape)
+                                                    .background(Color(0xFFF3E8FF), copyChipShape)
+                                                    .border(1.dp, Color.White, copyChipShape)
+                                                    .pressScaleClickable(onClick = copyFullPromptToClipboard)
+                                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                                                    .testTag("copy_prompt_button"),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ContentCopy,
+                                                    contentDescription = stringResource(R.string.copy_action),
+                                                    tint = Color(0xFF120C4A),
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                                Text(
+                                                    text = stringResource(R.string.copy_action),
+                                                    style = MaterialTheme.typography.labelMedium.copy(
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 12.5.sp
+                                                    ),
+                                                    color = Color(0xFF120C4A),
+                                                    maxLines = 1
+                                                )
+                                            }
                                         }
                                     }
 
-                                    isPromptComingSoon -> {
-                                        Text(
-                                            text = stringResource(R.string.prompt_coming_soon),
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            color = TextLavenderGray,
-                                            modifier = Modifier.testTag("prompt_coming_soon_text")
-                                        )
-                                    }
-
-                                    else -> {
-                                        val shimmerBrush = rememberShimmerBrush()
-                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    when {
+                                        !activePromptText.isNullOrBlank() -> {
+                                            val promptScrollState = rememberScrollState()
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .height(16.dp)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(shimmerBrush)
+                                                    .height(74.dp)
+                                                    .clip(RoundedCornerShape(14.dp))
+                                                    .clickable { copyFullPromptToClipboard() }
+                                                    .verticalScroll(promptScrollState)
+                                                    .padding(vertical = 2.dp)
+                                                    .testTag("prompt_selectable_text")
+                                            ) {
+                                                Text(
+                                                    text = activePromptText,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    lineHeight = 22.sp,
+                                                    color = Color.White.copy(alpha = 0.94f)
+                                                )
+                                            }
+                                        }
+
+                                        isPromptComingSoon -> {
+                                            Text(
+                                                text = stringResource(R.string.prompt_coming_soon),
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = TextLavenderGray,
+                                                modifier = Modifier.testTag("prompt_coming_soon_text")
                                             )
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth(0.85f)
-                                                    .height(16.dp)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(shimmerBrush)
-                                            )
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth(0.65f)
-                                                    .height(16.dp)
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(shimmerBrush)
-                                            )
+                                        }
+
+                                        else -> {
+                                            val shimmerBrush = rememberShimmerBrush()
+                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(16.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(shimmerBrush)
+                                                )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(0.85f)
+                                                        .height(16.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(shimmerBrush)
+                                                )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(0.65f)
+                                                        .height(16.dp)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(shimmerBrush)
+                                                )
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            // 7. Below the prompt box, a row of rounded AI tool chips (round logo + name)
-                            //    loaded from Firestore collection `aiTools`.
-                            //    Shown ONLY after the prompt is revealed and if the list is non-empty.
-                            if (!activePromptText.isNullOrBlank() && enabledAiTools.isNotEmpty()) {
-                                LazyRow(
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    contentPadding = PaddingValues(top = 2.dp),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("detail_ai_tools_chip_row")
-                                ) {
-                                    items(enabledAiTools, key = { it.id }) { tool ->
-                                        AiToolPromptChip(
-                                            tool = tool,
-                                            onClick = {
-                                                copyToClipboard(context, activePromptText)
-                                                onEmitMessage(copiedMsg)
-                                                openInAppCustomTab(context, tool.url)
-                                            }
-                                        )
+                                // 7. Below the prompt box, row of rounded AI tool chips
+                                if (!activePromptText.isNullOrBlank() && enabledAiTools.isNotEmpty()) {
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        contentPadding = PaddingValues(top = 2.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("detail_ai_tools_chip_row")
+                                    ) {
+                                        items(enabledAiTools, key = { it.id }) { tool ->
+                                            AiToolPromptChip(
+                                                tool = tool,
+                                                onClick = {
+                                                    copyToClipboard(context, activePromptText)
+                                                    onEmitMessage(copiedMsg)
+                                                    openInAppCustomTab(context, tool.url)
+                                                }
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -730,8 +1066,8 @@ fun ImageDetailScreen(
                 }
             }
 
-            // 8. Banner Ad in its own rounded 20dp container with a fixed reserved height and even spacing
-            if (!isCommentInputFocused && hasBannerSlotConfigured) {
+            // 8. Banner Ad in its own rounded 20dp container (HIDDEN while comments bottom sheet or keyboard is open)
+            if (!showCommentsSheet && !isCommentInputFocused && hasBannerSlotConfigured) {
                 item {
                     LumiereBannerAdSlot(
                         settings = advertisementSettings,
@@ -743,149 +1079,6 @@ fun ImageDetailScreen(
                             .padding(horizontal = 16.dp)
                             .testTag("detail_banner_ad")
                     )
-                }
-            }
-
-            // 9. Comments in rounded 28dp cards (NO "More like this" section)
-            if (appConfigSettings.allowComments) {
-                item {
-                    val commentsShape = RoundedCornerShape(28.dp)
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                            .clip(commentsShape)
-                            .background(PromptCardSurfaceBrush, commentsShape)
-                            .border(1.dp, IndigoSoftBorder, commentsShape)
-                    ) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { commentsExpanded = !commentsExpanded }
-                                    .padding(horizontal = 20.dp, vertical = 16.dp)
-                                    .testTag("comments_collapse_header"),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = stringResource(
-                                        R.string.comments_header,
-                                        maxOf(image.commentCount.toInt(), comments.size)
-                                    ),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Icon(
-                                    imageVector = if (commentsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                    contentDescription = null,
-                                    tint = TextLavenderGray
-                                )
-                            }
-
-                            AnimatedVisibility(
-                                visible = commentsExpanded,
-                                enter = expandVertically() + fadeIn(),
-                                exit = shrinkVertically() + fadeOut()
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 18.dp, vertical = 10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        OutlinedTextField(
-                                            value = commentDraft,
-                                            onValueChange = { commentDraft = it },
-                                            placeholder = {
-                                                Text(
-                                                    text = stringResource(R.string.comment_placeholder),
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    color = TextLavenderGray
-                                                )
-                                            },
-                                            shape = RoundedCornerShape(50),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedBorderColor = AccentViolet,
-                                                unfocusedBorderColor = IndigoSoftBorder,
-                                                focusedContainerColor = IndigoInnerBox,
-                                                unfocusedContainerColor = IndigoInnerBox,
-                                                focusedTextColor = Color.White,
-                                                unfocusedTextColor = Color.White
-                                            ),
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .onFocusChanged { focusState ->
-                                                    isCommentInputFocused = focusState.isFocused
-                                                }
-                                                .testTag("comment_input_field")
-                                        )
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(CircleShape)
-                                                .background(PromptAccentGradientBrush, CircleShape)
-                                                .pressScaleClickable {
-                                                    val textToSend = commentDraft.trim()
-                                                    if (textToSend.isNotEmpty()) {
-                                                        onPostComment(textToSend)
-                                                        commentDraft = ""
-                                                    }
-                                                }
-                                                .testTag("send_comment_button"),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.AutoMirrored.Filled.Send,
-                                                contentDescription = stringResource(R.string.submit_action),
-                                                tint = Color.White,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Text(
-                                        text = stringResource(R.string.comment_respect_note),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = TextLavenderGray
-                                    )
-
-                                    if (comments.isEmpty()) {
-                                        Text(
-                                            text = stringResource(R.string.no_comments_yet),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = TextLavenderGray,
-                                            modifier = Modifier.padding(vertical = 12.dp)
-                                        )
-                                    } else {
-                                        Column(
-                                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                                            modifier = Modifier.padding(bottom = 8.dp)
-                                        ) {
-                                            comments.forEach { comment ->
-                                                CommentRowItem(
-                                                    comment = comment,
-                                                    isOwnComment = !currentUserId.isNullOrBlank() && comment.userId == currentUserId,
-                                                    onDelete = { onDeleteComment(comment) },
-                                                    onReport = {
-                                                        reportReasonText = defaultReportReason
-                                                        commentToReport = comment
-                                                    },
-                                                    onBlockUser = { onBlockUser(comment.userId) }
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -958,13 +1151,14 @@ private fun RoundActionIconButton(
     borderColor: Color,
     countText: String?,
     testTag: String,
+    iconScale: Float = 1f,
     onClick: () -> Unit
 ) {
-    val pillShape = RoundedCornerShape(50)
+    val pillShape = RoundedCornerShape(25.dp)
     Box(
         modifier = Modifier
-            .height(48.dp)
-            .width(66.dp)
+            .height(50.dp)
+            .width(72.dp)
             .clip(pillShape)
             .background(containerColor, pillShape)
             .border(1.dp, borderColor, pillShape)
@@ -981,15 +1175,22 @@ private fun RoundActionIconButton(
                 imageVector = icon,
                 contentDescription = contentDescription,
                 tint = iconTint,
-                modifier = Modifier.size(21.dp)
+                modifier = Modifier
+                    .size(22.dp)
+                    .graphicsLayer {
+                        scaleX = iconScale
+                        scaleY = iconScale
+                    }
             )
             if (!countText.isNullOrBlank()) {
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = countText,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold
+                    ),
                     color = iconTint,
-                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1
                 )
             }

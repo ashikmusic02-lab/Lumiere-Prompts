@@ -1,13 +1,27 @@
 package com.example.ads
 
 import android.app.Activity
+import android.app.Application
 import android.content.Context
 import android.content.ContextWrapper
+import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.Message
 import android.util.Log
+import android.view.View
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
+import android.webkit.GeolocationPermissions
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
+import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,6 +53,7 @@ import com.google.android.gms.ads.FullScreenContentCallback
 import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.MobileAds
 import com.google.android.gms.ads.OnUserEarnedRewardListener
+import com.google.android.gms.ads.RequestConfiguration
 import com.google.android.gms.ads.appopen.AppOpenAd
 import com.google.android.gms.ads.interstitial.InterstitialAd
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
@@ -69,6 +84,9 @@ object AdMobManager {
 
     @Volatile
     private var mobileAdsInitialized = false
+
+    @Volatile
+    private var webViewSilencerInstalled = false
 
     private val _canRequestAdsFlow = MutableStateFlow(false)
     val canRequestAdsFlow: StateFlow<Boolean> = _canRequestAdsFlow.asStateFlow()
@@ -281,11 +299,19 @@ object AdMobManager {
 
     fun ensureMobileAdsInitialized(context: Context) {
         purgeCorruptedWebViewVariationsSeeds(context)
+        installGlobalAdWebViewConsoleSilencer(context)
         if (mobileAdsInitialized) return
         runCatching {
             val appCtx = context.applicationContext ?: context
+            runCatching {
+                val requestConfig = RequestConfiguration.Builder()
+                    .setTestDeviceIds(listOf(AdRequest.DEVICE_ID_EMULATOR))
+                    .build()
+                MobileAds.setRequestConfiguration(requestConfig)
+            }
             MobileAds.initialize(appCtx) {
                 Log.d(TAG, "MobileAds initialized")
+                runCatching { MobileAds.setAppMuted(true) }
                 purgeCorruptedWebViewVariationsSeeds(appCtx)
             }
             mobileAdsInitialized = true
@@ -293,6 +319,216 @@ object AdMobManager {
             mainHandler.postDelayed({ purgeCorruptedWebViewVariationsSeeds(appCtx) }, 7_000L)
         }.onFailure { e ->
             Log.w(TAG, "MobileAds initialization warning: ${e.message}")
+        }
+    }
+
+    /**
+     * Installs a process-wide listener on all Activities (including AdActivity and MainActivity)
+     * and ViewGroups to wrap any internal AdMob WebView's WebChromeClient so third-party HTML5/SVG/Video
+     * ad creative JS console messages (e.g. `E/Ads: JS: Error: <svg> attribute viewBox...` or
+     * `E/Ads: JS: Uncaught TypeError...`) are consumed silently instead of polluting logcat at ERROR level.
+     */
+    private fun installGlobalAdWebViewConsoleSilencer(context: Context) {
+        if (webViewSilencerInstalled) return
+        val app = (context.applicationContext as? Application) ?: return
+        webViewSilencerInstalled = true
+
+        runCatching {
+            app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+                    attachSilencerToActivity(activity)
+                }
+
+                override fun onActivityStarted(activity: Activity) {
+                    attachSilencerToActivity(activity)
+                }
+
+                override fun onActivityResumed(activity: Activity) {
+                    attachSilencerToActivity(activity)
+                }
+
+                override fun onActivityPaused(activity: Activity) {}
+                override fun onActivityStopped(activity: Activity) {}
+                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+                override fun onActivityDestroyed(activity: Activity) {}
+            })
+        }
+        findActivity(context)?.let { attachSilencerToActivity(it) }
+    }
+
+    private fun attachSilencerToActivity(activity: Activity) {
+        runCatching {
+            val decorView = activity.window?.decorView ?: return
+            silenceWebViewsRecursively(decorView)
+            mainHandler.postDelayed({ silenceWebViewsRecursively(decorView) }, 150L)
+            mainHandler.postDelayed({ silenceWebViewsRecursively(decorView) }, 600L)
+        }
+    }
+
+    fun silenceWebViewsRecursively(root: View?) {
+        if (root == null) return
+        runCatching {
+            if (root is WebView) {
+                silenceSingleWebView(root)
+            }
+            if (root is ViewGroup) {
+                root.setOnHierarchyChangeListener(object : ViewGroup.OnHierarchyChangeListener {
+                    override fun onChildViewAdded(parent: View?, child: View?) {
+                        silenceWebViewsRecursively(child)
+                        mainHandler.postDelayed({ silenceWebViewsRecursively(child) }, 60L)
+                        mainHandler.postDelayed({ silenceWebViewsRecursively(child) }, 300L)
+                        mainHandler.postDelayed({ silenceWebViewsRecursively(child) }, 1000L)
+                    }
+
+                    override fun onChildViewRemoved(parent: View?, child: View?) {}
+                })
+                for (i in 0 until root.childCount) {
+                    silenceWebViewsRecursively(root.getChildAt(i))
+                }
+            }
+        }
+    }
+
+    private fun silenceSingleWebView(webView: WebView) {
+        runCatching {
+            val existingClient = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                runCatching { webView.webChromeClient }.getOrNull()
+            } else {
+                null
+            }
+            if (existingClient !is SilencingWebChromeClient) {
+                webView.webChromeClient = SilencingWebChromeClient(existingClient)
+            }
+            runCatching {
+                webView.evaluateJavascript(
+                    "try{window.onerror=function(){return true;};if(window.console){window.console.error=function(){};window.console.warn=function(){};}}catch(e){}",
+                    null
+                )
+            }
+        }
+    }
+
+    private class SilencingWebChromeClient(
+        private val delegate: WebChromeClient?
+    ) : WebChromeClient() {
+        override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+            // Return true to indicate the console message has been handled and suppress `E/Ads: JS: ...`
+            return true
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun onConsoleMessage(message: String?, lineNumber: Int, sourceID: String?) {
+            // Suppressed
+        }
+
+        override fun onProgressChanged(view: WebView?, newProgress: Int) {
+            if (view != null && (newProgress == 15 || newProgress == 50 || newProgress == 100)) {
+                runCatching {
+                    view.evaluateJavascript(
+                        "try{window.onerror=function(){return true;};if(window.console){window.console.error=function(){};window.console.warn=function(){};}}catch(e){}",
+                        null
+                    )
+                }
+            }
+            runCatching { delegate?.onProgressChanged(view, newProgress) ?: super.onProgressChanged(view, newProgress) }
+        }
+
+        override fun onReceivedTitle(view: WebView?, title: String?) {
+            runCatching { delegate?.onReceivedTitle(view, title) ?: super.onReceivedTitle(view, title) }
+        }
+
+        override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
+            runCatching { delegate?.onReceivedIcon(view, icon) ?: super.onReceivedIcon(view, icon) }
+        }
+
+        override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+            runCatching { delegate?.onShowCustomView(view, callback) ?: super.onShowCustomView(view, callback) }
+        }
+
+        override fun onHideCustomView() {
+            runCatching { delegate?.onHideCustomView() ?: super.onHideCustomView() }
+        }
+
+        override fun onCreateWindow(
+            view: WebView?,
+            isDialog: Boolean,
+            isUserGesture: Boolean,
+            resultMsg: Message?
+        ): Boolean {
+            return runCatching {
+                delegate?.onCreateWindow(view, isDialog, isUserGesture, resultMsg)
+                    ?: super.onCreateWindow(view, isDialog, isUserGesture, resultMsg)
+            }.getOrDefault(false)
+        }
+
+        override fun onCloseWindow(window: WebView?) {
+            runCatching { delegate?.onCloseWindow(window) ?: super.onCloseWindow(window) }
+        }
+
+        override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+            return runCatching {
+                delegate?.onJsAlert(view, url, message, result) ?: super.onJsAlert(view, url, message, result)
+            }.getOrDefault(false)
+        }
+
+        override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+            return runCatching {
+                delegate?.onJsConfirm(view, url, message, result) ?: super.onJsConfirm(view, url, message, result)
+            }.getOrDefault(false)
+        }
+
+        override fun onJsPrompt(
+            view: WebView?,
+            url: String?,
+            message: String?,
+            defaultValue: String?,
+            result: JsPromptResult?
+        ): Boolean {
+            return runCatching {
+                delegate?.onJsPrompt(view, url, message, defaultValue, result)
+                    ?: super.onJsPrompt(view, url, message, defaultValue, result)
+            }.getOrDefault(false)
+        }
+
+        override fun onPermissionRequest(request: PermissionRequest?) {
+            runCatching { delegate?.onPermissionRequest(request) ?: super.onPermissionRequest(request) }
+        }
+
+        override fun onPermissionRequestCanceled(request: PermissionRequest?) {
+            runCatching { delegate?.onPermissionRequestCanceled(request) ?: super.onPermissionRequestCanceled(request) }
+        }
+
+        override fun onGeolocationPermissionsShowPrompt(
+            origin: String?,
+            callback: GeolocationPermissions.Callback?
+        ) {
+            runCatching {
+                delegate?.onGeolocationPermissionsShowPrompt(origin, callback)
+                    ?: super.onGeolocationPermissionsShowPrompt(origin, callback)
+            }
+        }
+
+        override fun onGeolocationPermissionsHidePrompt() {
+            runCatching { delegate?.onGeolocationPermissionsHidePrompt() ?: super.onGeolocationPermissionsHidePrompt() }
+        }
+
+        override fun onShowFileChooser(
+            webView: WebView?,
+            filePathCallback: ValueCallback<Array<Uri>>?,
+            fileChooserParams: FileChooserParams?
+        ): Boolean {
+            return runCatching {
+                delegate?.onShowFileChooser(webView, filePathCallback, fileChooserParams)
+                    ?: super.onShowFileChooser(webView, filePathCallback, fileChooserParams)
+            }.getOrDefault(false)
+        }
+
+        override fun getDefaultVideoPoster(): Bitmap? {
+            return runCatching { delegate?.defaultVideoPoster ?: super.getDefaultVideoPoster() }.getOrNull()
+        }
+
+        override fun getVideoLoadingProgressView(): View? {
+            return runCatching { delegate?.videoLoadingProgressView ?: super.getVideoLoadingProgressView() }.getOrNull()
         }
     }
 
@@ -474,13 +710,11 @@ object AdMobManager {
 
     /**
      * Called when an Image Detail screen is opened:
-     * - Preloads Rewarded and Interstitial ads if enabled.
-     * - Also shows the Interstitial ad after every N-th post opened (where N = interstitialFrequency)
-     *   with a minimum 45-second cooldown, never while a rewarded ad was just shown.
+     * - Preloads Rewarded (and fallback Interstitial) ads in the background if enabled.
+     * - Never shows an interstitial ad when opening a post.
      */
     fun onDetailScreenEntered(context: Context, settings: AdvertisementSettings) {
         postsOpenedInSessionCount++
-        val wasRewardedJustShown = rewardedAdShownInCurrentVisit
         rewardedAdShownInCurrentVisit = false
 
         if (!settings.allAdsEnabled) {
@@ -500,53 +734,11 @@ object AdMobManager {
             cachedRewardedUnitId = null
         }
 
-        if (!settings.interstitialAdsEnabled) {
+        if (settings.interstitialAdsEnabled) {
+            preloadInterstitialIfNeeded(context, settings)
+        } else {
             cachedInterstitialAd = null
             cachedInterstitialUnitId = null
-            return
-        }
-
-        val unitId = resolveInterstitialUnitId(settings)
-        if (unitId.isBlank() || !canRequestAds(context)) {
-            if (unitId.isBlank()) {
-                cachedInterstitialAd = null
-                cachedInterstitialUnitId = null
-            }
-            return
-        }
-
-        val frequency = settings.interstitialFrequency.coerceIn(1L, 50L).toInt()
-        val now = System.currentTimeMillis()
-        val cooldownElapsed = (now - lastInterstitialShownAtMs) >= INTERSTITIAL_COOLDOWN_MS
-
-        val eligibleToShowOnNthPostOpened = !wasRewardedJustShown &&
-            (postsOpenedInSessionCount % frequency == 0) &&
-            cooldownElapsed &&
-            !isShowingFullScreenAd
-
-        val activity = findActivity(context)
-        val readyAd = cachedInterstitialAd
-        if (eligibleToShowOnNthPostOpened && activity != null && !activity.isFinishing && readyAd != null && cachedInterstitialUnitId == unitId) {
-            cachedInterstitialAd = null
-            lastInterstitialShownAtMs = now
-            isShowingFullScreenAd = true
-            readyAd.fullScreenContentCallback = object : FullScreenContentCallback() {
-                override fun onAdDismissedFullScreenContent() {
-                    isShowingFullScreenAd = false
-                    preloadInterstitialIfNeeded(activity, settings)
-                }
-
-                override fun onAdFailedToShowFullScreenContent(adError: AdError) {
-                    isShowingFullScreenAd = false
-                    preloadInterstitialIfNeeded(activity, settings)
-                }
-            }
-            runCatching { readyAd.show(activity) }.onFailure {
-                isShowingFullScreenAd = false
-                preloadInterstitialIfNeeded(activity, settings)
-            }
-        } else {
-            preloadInterstitialIfNeeded(context, settings)
         }
     }
 
@@ -630,7 +822,7 @@ object AdMobManager {
         }
 
         val activity = findActivity(context)
-        if (activity == null || activity.isFinishing || !canRequestAds(context)) {
+        if (activity == null || activity.isFinishing || activity.isDestroyed || !canRequestAds(context)) {
             onProceedToPrompt("none")
             return
         }
@@ -888,6 +1080,7 @@ fun LumiereBannerAdSlot(
                 adListener = object : AdListener() {
                     override fun onAdLoaded() {
                         adFailedPermanently = false
+                        AdMobManager.silenceWebViewsRecursively(this@apply)
                     }
 
                     override fun onAdFailedToLoad(error: LoadAdError) {
@@ -898,6 +1091,7 @@ fun LumiereBannerAdSlot(
                         }
                     }
                 }
+                AdMobManager.silenceWebViewsRecursively(this)
                 runCatching { loadAd(AdRequest.Builder().build()) }
                     .onFailure { adFailedPermanently = true }
             }

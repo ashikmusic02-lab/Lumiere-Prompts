@@ -52,9 +52,11 @@
 
     <!-- Comments & Moderation -->
     <string name="comments_header">Comments (%1$d)</string>
+    <string name="view_comments_count">View comments (%1$d)</string>
+    <string name="sign_in_to_comment">Sign in to comment</string>
     <string name="comment_placeholder">Add a comment…</string>
     <string name="comment_respect_note">Be respectful. Abusive comments are removed.</string>
-    <string name="no_comments_yet">No comments yet</string>
+    <string name="no_comments_yet">No comments yet. Be the first!</string>
     <string name="reply_from_promptlens">Reply from PromptLens</string>
     <string name="delete_comment">Delete</string>
     <string name="report_comment">Report</string>
@@ -104,6 +106,8 @@
     <string name="terms_of_use_label">Terms of use</string>
     <string name="about_label">About</string>
     <string name="about_version_format">Version %1$s</string>
+    <string name="about_support_email_format">Support: %1$s</string>
+    <string name="contact_us_label">Contact us</string>
     <string name="contact_support_label">Contact support</string>
     <string name="share_app_label">Share app</string>
     <string name="rate_app_label">Rate us</string>

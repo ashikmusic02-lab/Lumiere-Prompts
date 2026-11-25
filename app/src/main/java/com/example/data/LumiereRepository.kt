@@ -14,7 +14,6 @@ import com.example.model.ImageComment
 import com.example.model.ImagePromptDocument
 import com.example.model.InspirationImage
 import com.example.model.LikeRecord
-import com.example.model.UserProfile
 import com.google.firebase.Firebase
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
@@ -26,15 +25,19 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.PersistentCacheSettings
+import com.google.firebase.firestore.QuerySnapshot
 import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 class ReauthRequiredForDeleteException : Exception("Re-authentication required")
@@ -68,14 +71,41 @@ class LumiereRepository(
 
     private fun requireRealUser(): FirebaseUser {
         val user = auth.currentUser
-        if (!GoogleSignInManager.isRealAuthenticatedUser(user)) {
+        if (user == null || !GoogleSignInManager.isRealAuthenticatedUser(user)) {
             throw IllegalStateException("Sign in with Google to continue.")
         }
-        return user!!
+        return user
     }
 
     private fun isValidDocId(id: String): Boolean {
         return id.isNotBlank() && id.length <= 128 && id.matches(Regex("^[a-zA-Z0-9_\\-]+$"))
+    }
+
+    /**
+     * Safely deserializes a single [DocumentSnapshot] into [clazz], returning `null` if the document
+     * contains malformed field types instead of crashing the app.
+     */
+    private fun <T> DocumentSnapshot.safeToObject(clazz: Class<T>): T? {
+        return runCatching {
+            toObject(clazz, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+        }.getOrNull()
+    }
+
+    /**
+     * Safely deserializes each document in a [QuerySnapshot] individually so one malformed document
+     * is skipped rather than crashing the entire list query.
+     */
+    private fun <T> QuerySnapshot.safeToObjects(clazz: Class<T>): List<T> {
+        val docs = documents
+        if (docs.isEmpty()) return emptyList()
+        return buildList(docs.size) {
+            for (doc in docs) {
+                val parsed = doc.safeToObject(clazz)
+                if (parsed != null) {
+                    add(parsed)
+                }
+            }
+        }
     }
 
     fun logAnalyticsEvent(eventName: String, params: Map<String, String> = emptyMap()) {
@@ -95,85 +125,82 @@ class LumiereRepository(
      * Fetches all currently published images using a single equality filter (`status == "published"`)
      * and sorts them newest first (`createdAt DESC`) on the client so no composite index is required.
      */
-    suspend fun fetchAllPublishedImages(source: Source = Source.DEFAULT): Result<List<InspirationImage>> {
-        val path = "images"
-        return try {
-            val snapshot = db.collection(path)
-                .whereEqualTo("status", "published")
-                .get(source)
-                .await()
+    suspend fun fetchAllPublishedImages(source: Source = Source.DEFAULT): Result<List<InspirationImage>> =
+        withContext(Dispatchers.IO) {
+            val path = "images"
+            try {
+                val snapshot = db.collection(path)
+                    .whereEqualTo("status", "published")
+                    .get(source)
+                    .await()
 
-            val items = snapshot.toObjects(
-                InspirationImage::class.java,
-                DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-            ).sortedWith(
-                compareByDescending<InspirationImage> { it.createdAt?.seconds ?: 0L }
-                    .thenBy { it.displayOrder }
-            )
-            Result.success(items)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.LIST, path)
-            Result.failure(e)
+                val items = snapshot.safeToObjects(InspirationImage::class.java)
+                    .sortedWith(
+                        compareByDescending<InspirationImage> { it.createdAt?.seconds ?: 0L }
+                            .thenBy { it.displayOrder }
+                    )
+                Result.success(items)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.LIST, path)
+                Result.failure(e)
+            }
         }
-    }
 
     /**
      * Fetches all currently published categories using a single equality filter (`status == "published"`)
      * and sorts them on the client by `sortOrder ASC` so no composite index is required.
      */
-    suspend fun fetchAllPublishedCategories(source: Source = Source.DEFAULT): Result<List<CategoryItem>> {
-        val path = "categories"
-        return try {
-            val snapshot = db.collection(path)
-                .whereEqualTo("status", "published")
-                .get(source)
-                .await()
+    suspend fun fetchAllPublishedCategories(source: Source = Source.DEFAULT): Result<List<CategoryItem>> =
+        withContext(Dispatchers.IO) {
+            val path = "categories"
+            try {
+                val snapshot = db.collection(path)
+                    .whereEqualTo("status", "published")
+                    .get(source)
+                    .await()
 
-            val items = snapshot.toObjects(
-                CategoryItem::class.java,
-                DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-            ).sortedBy { it.sortOrder }
-            Result.success(items)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.LIST, path)
-            Result.failure(e)
+                val items = snapshot.safeToObjects(CategoryItem::class.java)
+                    .sortedBy { it.sortOrder }
+                Result.success(items)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                handleFirestoreError(e, OperationType.LIST, path)
+                Result.failure(e)
+            }
         }
-    }
 
     /**
      * Fetches all enabled AI tools from `aiTools` (`enabled == true`) and sorts them by `sortOrder ASC` on the client.
      */
-    suspend fun fetchAllEnabledAiTools(source: Source = Source.DEFAULT): Result<List<AiToolItem>> {
-        val path = "aiTools"
-        return try {
-            val snapshot = db.collection(path)
-                .whereEqualTo("enabled", true)
-                .get(source)
-                .await()
+    suspend fun fetchAllEnabledAiTools(source: Source = Source.DEFAULT): Result<List<AiToolItem>> =
+        withContext(Dispatchers.IO) {
+            val path = "aiTools"
+            try {
+                val snapshot = db.collection(path)
+                    .whereEqualTo("enabled", true)
+                    .get(source)
+                    .await()
 
-            val items = snapshot.toObjects(
-                AiToolItem::class.java,
-                DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-            ).sortedBy { it.sortOrder }
-            Result.success(items)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: FirebaseFirestoreException) {
-            if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
-                Result.success(emptyList())
-            } else {
+                val items = snapshot.safeToObjects(AiToolItem::class.java)
+                    .sortedBy { it.sortOrder }
+                Result.success(items)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: FirebaseFirestoreException) {
+                if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                    Result.success(emptyList())
+                } else {
+                    handleFirestoreError(e, OperationType.LIST, path)
+                    Result.failure(e)
+                }
+            } catch (e: Exception) {
                 handleFirestoreError(e, OperationType.LIST, path)
                 Result.failure(e)
             }
-        } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.LIST, path)
-            Result.failure(e)
         }
-    }
 
     fun observeEnabledAiTools(): Flow<List<AiToolItem>> = flow {
         val uid = auth.currentUser?.uid
@@ -183,10 +210,8 @@ class LumiereRepository(
                 .whereEqualTo("enabled", true)
                 .snapshots()
                 .map { snapshot ->
-                    snapshot.toObjects(
-                        AiToolItem::class.java,
-                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    ).sortedBy { it.sortOrder }
+                    snapshot.safeToObjects(AiToolItem::class.java)
+                        .sortedBy { it.sortOrder }
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -204,7 +229,7 @@ class LumiereRepository(
                     throw error
                 }
         )
-    }
+    }.flowOn(Dispatchers.Default)
 
     // =========================================================================
     // PROMPT ACCESS (`promptUnlocks/{uid}_{imageId}` -> `imagePrompts/{imageId}`)
@@ -292,10 +317,7 @@ class LumiereRepository(
                 return Result.failure(PromptComingSoonException())
             }
 
-            val doc = promptSnap.toObject(
-                ImagePromptDocument::class.java,
-                DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-            )
+            val doc = promptSnap.safeToObject(ImagePromptDocument::class.java)
             val text = doc?.promptText?.trim().orEmpty()
             if (text.isEmpty()) {
                 Result.failure(PromptComingSoonException())
@@ -342,10 +364,7 @@ class LumiereRepository(
             val promptSnap = withTimeout(WRITE_TIMEOUT_MS) {
                 db.collection("imagePrompts").document(cleanImageId).get(Source.SERVER).await()
             }
-            val text = promptSnap.toObject(
-                ImagePromptDocument::class.java,
-                DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-            )?.promptText?.trim()
+            val text = promptSnap.safeToObject(ImagePromptDocument::class.java)?.promptText?.trim()
             Result.success(text?.takeIf { it.isNotEmpty() })
         } catch (e: CancellationException) {
             throw e
@@ -355,7 +374,7 @@ class LumiereRepository(
     }
 
     // =========================================================================
-    // OBSERVABLE STREAMS (Equality-only queries; client-side sorting)
+    // OBSERVABLE STREAMS (Equality-only queries; client-side sorting off main thread)
     // =========================================================================
 
     fun observePublishedCategories(): Flow<List<CategoryItem>> = flow {
@@ -366,10 +385,8 @@ class LumiereRepository(
                 .whereEqualTo("status", "published")
                 .snapshots()
                 .map { snapshot ->
-                    snapshot.toObjects(
-                        CategoryItem::class.java,
-                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    ).sortedBy { it.sortOrder }
+                    snapshot.safeToObjects(CategoryItem::class.java)
+                        .sortedBy { it.sortOrder }
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -383,7 +400,7 @@ class LumiereRepository(
                     throw error
                 }
         )
-    }
+    }.flowOn(Dispatchers.Default)
 
     fun observeUserLikes(userId: String): Flow<List<LikeRecord>> = flow {
         val currentUser = auth.currentUser
@@ -402,10 +419,7 @@ class LumiereRepository(
                 .whereEqualTo("userId", uid)
                 .snapshots()
                 .map { snapshot ->
-                    snapshot.toObjects(
-                        LikeRecord::class.java,
-                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    )
+                    snapshot.safeToObjects(LikeRecord::class.java)
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -423,7 +437,7 @@ class LumiereRepository(
                     throw error
                 }
         )
-    }
+    }.flowOn(Dispatchers.Default)
 
     fun observeUserFavorites(userId: String): Flow<List<FavoriteRecord>> = flow {
         val currentUser = auth.currentUser
@@ -442,10 +456,8 @@ class LumiereRepository(
                 .whereEqualTo("userId", uid)
                 .snapshots()
                 .map { snapshot ->
-                    snapshot.toObjects(
-                        FavoriteRecord::class.java,
-                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    ).sortedByDescending { it.createdAt?.seconds ?: 0L }
+                    snapshot.safeToObjects(FavoriteRecord::class.java)
+                        .sortedByDescending { it.createdAt?.seconds ?: 0L }
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -463,7 +475,7 @@ class LumiereRepository(
                     throw error
                 }
         )
-    }
+    }.flowOn(Dispatchers.Default)
 
     /**
      * Observes visible comments for an image using equality-only filters (`imageId` and `status == "visible"`)
@@ -478,10 +490,8 @@ class LumiereRepository(
                 .whereEqualTo("status", "visible")
                 .snapshots()
                 .map { snapshot ->
-                    snapshot.toObjects(
-                        ImageComment::class.java,
-                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    ).sortedByDescending { it.createdAt?.seconds ?: 0L }
+                    snapshot.safeToObjects(ImageComment::class.java)
+                        .sortedByDescending { it.createdAt?.seconds ?: 0L }
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -495,7 +505,7 @@ class LumiereRepository(
                     throw error
                 }
         )
-    }
+    }.flowOn(Dispatchers.Default)
 
     /**
      * Observes published broadcast notifications using an equality-only filter (`status == "published"`)
@@ -509,10 +519,8 @@ class LumiereRepository(
                 .whereEqualTo("status", "published")
                 .snapshots()
                 .map { snapshot ->
-                    snapshot.toObjects(
-                        AppNotification::class.java,
-                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    ).sortedByDescending { it.createdAt?.seconds ?: 0L }
+                    snapshot.safeToObjects(AppNotification::class.java)
+                        .sortedByDescending { it.createdAt?.seconds ?: 0L }
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -526,7 +534,7 @@ class LumiereRepository(
                     throw error
                 }
         )
-    }
+    }.flowOn(Dispatchers.Default)
 
     /**
      * Observes comment replies for a signed-in real user:
@@ -551,10 +559,8 @@ class LumiereRepository(
                 .whereEqualTo("status", "visible")
                 .snapshots()
                 .map { snapshot ->
-                    snapshot.toObjects(
-                        ImageComment::class.java,
-                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    ).filter { it.adminReply.isNotBlank() }
+                    snapshot.safeToObjects(ImageComment::class.java)
+                        .filter { it.adminReply.isNotBlank() }
                         .sortedByDescending { (it.updatedAt ?: it.createdAt)?.seconds ?: 0L }
                 }
                 .catch { error ->
@@ -573,7 +579,7 @@ class LumiereRepository(
                     throw error
                 }
         )
-    }
+    }.flowOn(Dispatchers.Default)
 
     fun observeAppConfigSettings(): Flow<AppConfigSettings> = flow {
         val uid = auth.currentUser?.uid
@@ -582,10 +588,7 @@ class LumiereRepository(
             db.collection("appSettings").document("global")
                 .snapshots()
                 .map { snapshot ->
-                    snapshot.toObject(
-                        AppConfigSettings::class.java,
-                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    ) ?: AppConfigSettings()
+                    snapshot.safeToObject(AppConfigSettings::class.java) ?: AppConfigSettings()
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }
@@ -599,7 +602,7 @@ class LumiereRepository(
                     throw error
                 }
         )
-    }
+    }.flowOn(Dispatchers.Default)
 
     /**
      * Observes `advertisementSettings/global`:
@@ -617,10 +620,8 @@ class LumiereRepository(
                     if (!snapshot.exists()) {
                         AdvertisementSettings.defaultWhenDocumentMissing()
                     } else {
-                        snapshot.toObject(
-                            AdvertisementSettings::class.java,
-                            DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                        ) ?: AdvertisementSettings.defaultWhenDocumentMissing()
+                        snapshot.safeToObject(AdvertisementSettings::class.java)
+                            ?: AdvertisementSettings.defaultWhenDocumentMissing()
                     }
                 }
                 .catch { error ->
@@ -635,19 +636,17 @@ class LumiereRepository(
                     throw error
                 }
         )
-    }
+    }.flowOn(Dispatchers.Default)
 
-    suspend fun fetchImageById(imageId: String): Result<InspirationImage?> {
+    suspend fun fetchImageById(imageId: String): Result<InspirationImage?> = withContext(Dispatchers.IO) {
         val cleanId = imageId.trim()
         val path = "images/$cleanId"
-        return try {
+        try {
             require(isValidDocId(cleanId)) { "Invalid image identifier." }
             val snapshot = db.collection("images").document(cleanId).get().await()
             val image = if (snapshot.exists()) {
-                snapshot.toObject(
-                    InspirationImage::class.java,
-                    DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                )?.takeIf { it.status == "published" }
+                snapshot.safeToObject(InspirationImage::class.java)
+                    ?.takeIf { it.status == "published" }
             } else null
             Result.success(image)
         } catch (e: CancellationException) {

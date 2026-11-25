@@ -12,6 +12,7 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.CachePolicy
 import coil.request.ImageRequest
+import coil.size.Precision
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -47,7 +48,7 @@ object NetworkAndCacheManager {
                         .maxSizeBytes(MAX_DISK_CACHE_BYTES)
                         .build()
                 }
-                .crossfade(true)
+                .crossfade(150)
                 .build()
             Coil.setImageLoader(loader)
             configuredImageLoader = loader
@@ -58,9 +59,20 @@ object NetworkAndCacheManager {
     fun isOnlineNow(context: Context): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return false
-        val network = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val active = cm.activeNetwork
+        if (active != null) {
+            val caps = cm.getNetworkCapabilities(active)
+            if (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                return true
+            }
+        }
+        return runCatching {
+            @Suppress("DEPRECATION")
+            cm.allNetworks.any { network ->
+                cm.getNetworkCapabilities(network)
+                    ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+            }
+        }.getOrDefault(false)
     }
 
     fun isUnmeteredWifiNow(context: Context): Boolean {
@@ -97,8 +109,7 @@ object NetworkAndCacheManager {
                 network: Network,
                 networkCapabilities: NetworkCapabilities
             ) {
-                val hasInternet = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                trySend(hasInternet)
+                trySend(isOnlineNow(appContext))
             }
         }
 
@@ -155,6 +166,8 @@ object NetworkAndCacheManager {
                 .forEach { url ->
                     val request = ImageRequest.Builder(appContext)
                         .data(url)
+                        .size(540, 720)
+                        .precision(Precision.INEXACT)
                         .memoryCachePolicy(CachePolicy.ENABLED)
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .build()

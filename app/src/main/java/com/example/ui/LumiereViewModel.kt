@@ -28,6 +28,7 @@ import com.example.model.MergedNotificationItem
 import com.example.model.ThemePreference
 import com.example.model.UiState
 import com.google.firebase.Firebase
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.Source
@@ -483,11 +484,15 @@ class LumiereViewModel(
         }
     }
 
+    private fun isCurrentlyOnline(): Boolean {
+        return isOnline.value || NetworkAndCacheManager.isOnlineNow(appContext)
+    }
+
     /**
      * Silently syncs in the background when the Home tab is tapped or Retry is pressed.
      */
     fun onHomeTabSelected() {
-        if (isOnline.value) {
+        if (isCurrentlyOnline()) {
             syncAndReconcileCatalog(force = true, showRefreshIndicator = false)
         } else if (_imagesUiState.value is UiState.Error) {
             emitOfflineMessage()
@@ -513,7 +518,7 @@ class LumiereViewModel(
                 return@launch
             }
 
-            if (!isOnline.value) {
+            if (!isCurrentlyOnline()) {
                 if (cachedCategories.isNotEmpty()) {
                     _categoriesState.value = cachedCategories
                 }
@@ -593,12 +598,17 @@ class LumiereViewModel(
                         remainingUrls = allUrls.drop(20)
                     )
                 },
-                onFailure = {
+                onFailure = { err ->
                     val fallback = existingDisplayed.ifEmpty { cachedImages }
                     if (fallback.isNotEmpty()) {
                         _imagesUiState.value = UiState.Success(sortNewestFirst(fallback))
                     } else {
-                        _imagesUiState.value = UiState.Error(appContext.getString(R.string.turn_on_internet_message))
+                        val errorMsgRes = if (!isCurrentlyOnline() || isNetworkOrTimeoutError(err)) {
+                            R.string.turn_on_internet_message
+                        } else {
+                            R.string.error_loading_content
+                        }
+                        _imagesUiState.value = UiState.Error(appContext.getString(errorMsgRes))
                     }
                 }
             )
@@ -609,7 +619,7 @@ class LumiereViewModel(
     }
 
     fun onPullToRefresh() {
-        if (!isOnline.value) {
+        if (!isCurrentlyOnline()) {
             emitOfflineMessage()
             _isRefreshing.value = false
             return
@@ -629,6 +639,12 @@ class LumiereViewModel(
                     _rawActiveComments.value = list
                 }
         }
+    }
+
+    fun stopObservingComments() {
+        commentsJob?.cancel()
+        commentsJob = null
+        _rawActiveComments.value = emptyList()
     }
 
     fun onImageDetailOpened(image: InspirationImage) {
@@ -744,7 +760,7 @@ class LumiereViewModel(
         image: InspirationImage,
         onRequireSignIn: (afterSignInAction: () -> Unit) -> Unit
     ) {
-        if (!isOnline.value) {
+        if (!isCurrentlyOnline()) {
             emitOfflineMessage()
             return
         }
@@ -768,8 +784,12 @@ class LumiereViewModel(
                 updateLocalCatalogImageCount(image.id) { img ->
                     img.copy(likeCount = (img.likeCount + delta).coerceAtLeast(0L))
                 }
-            }.onFailure {
-                emitMessage(appContext.getString(R.string.error_loading_content))
+            }.onFailure { err ->
+                if (!isCurrentlyOnline() || isNetworkOrTimeoutError(err)) {
+                    emitOfflineMessage()
+                } else {
+                    emitMessage(appContext.getString(R.string.error_loading_content))
+                }
             }
         }
     }
@@ -780,18 +800,22 @@ class LumiereViewModel(
         viewModelScope.launch {
             localPrefs.setLocalFavorite(image.id, newFavorited)
             val currentUser = runCatching { Firebase.auth.currentUser }.getOrNull()
-            if (GoogleSignInManager.isRealAuthenticatedUser(currentUser) && isOnline.value) {
+            if (GoogleSignInManager.isRealAuthenticatedUser(currentUser) && isCurrentlyOnline()) {
                 val repo = repository ?: return@launch
                 val result = repo.toggleFavorite(image, currentlyFavorited)
-                result.onFailure {
-                    emitMessage(appContext.getString(R.string.error_loading_content))
+                result.onFailure { err ->
+                    if (!isCurrentlyOnline() || isNetworkOrTimeoutError(err)) {
+                        emitOfflineMessage()
+                    } else {
+                        emitMessage(appContext.getString(R.string.error_loading_content))
+                    }
                 }
             }
         }
     }
 
     fun onPostShared(image: InspirationImage) {
-        if (!isOnline.value) return
+        if (!isCurrentlyOnline()) return
         viewModelScope.launch {
             repository?.recordPromptShare(image.id)
         }
@@ -802,7 +826,7 @@ class LumiereViewModel(
         rawText: String,
         onRequireSignIn: (afterSignInAction: () -> Unit) -> Unit
     ) {
-        if (!isOnline.value) {
+        if (!isCurrentlyOnline()) {
             emitOfflineMessage()
             return
         }
@@ -820,20 +844,51 @@ class LumiereViewModel(
 
     private fun executePostComment(imageId: String, trimmedText: String) {
         val repo = repository ?: return
+        val currentUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+        val optimisticId = "optimistic_${System.currentTimeMillis()}"
+        val nowTs = Timestamp.now()
+        val userName = (currentUser?.displayName ?: "PromptLens Member")
+            .trim()
+            .take(80)
+            .ifBlank { "PromptLens Member" }
+        val optimisticComment = ImageComment(
+            id = optimisticId,
+            imageId = imageId,
+            userId = currentUser?.uid.orEmpty(),
+            userName = userName,
+            text = trimmedText,
+            reported = false,
+            reportReason = "",
+            adminReply = "",
+            status = "visible",
+            createdAt = nowTs,
+            updatedAt = nowTs
+        )
+        // Show the new comment instantly at the top of the list
+        _rawActiveComments.value = listOf(optimisticComment) + _rawActiveComments.value
+        updateLocalCatalogImageCount(imageId) { img ->
+            img.copy(commentCount = img.commentCount + 1L)
+        }
+
         viewModelScope.launch {
             val res = repo.postComment(imageId, trimmedText)
-            res.onSuccess {
+            res.onFailure { err ->
+                // Roll back optimistic comment if server write failed
+                _rawActiveComments.value = _rawActiveComments.value.filterNot { it.id == optimisticId }
                 updateLocalCatalogImageCount(imageId) { img ->
-                    img.copy(commentCount = img.commentCount + 1L)
+                    img.copy(commentCount = (img.commentCount - 1L).coerceAtLeast(0L))
                 }
-            }.onFailure {
-                emitMessage(appContext.getString(R.string.error_loading_content))
+                if (!isCurrentlyOnline() || isNetworkOrTimeoutError(err)) {
+                    emitOfflineMessage()
+                } else {
+                    emitMessage(appContext.getString(R.string.error_loading_content))
+                }
             }
         }
     }
 
     fun deleteComment(comment: ImageComment) {
-        if (!isOnline.value) {
+        if (!isCurrentlyOnline()) {
             emitOfflineMessage()
             return
         }
@@ -844,8 +899,12 @@ class LumiereViewModel(
                 updateLocalCatalogImageCount(comment.imageId) { img ->
                     img.copy(commentCount = (img.commentCount - 1L).coerceAtLeast(0L))
                 }
-            }.onFailure {
-                emitMessage(appContext.getString(R.string.error_loading_content))
+            }.onFailure { err ->
+                if (!isCurrentlyOnline() || isNetworkOrTimeoutError(err)) {
+                    emitOfflineMessage()
+                } else {
+                    emitMessage(appContext.getString(R.string.error_loading_content))
+                }
             }
         }
     }
@@ -855,7 +914,7 @@ class LumiereViewModel(
         reason: String,
         onRequireSignIn: (afterSignInAction: () -> Unit) -> Unit
     ) {
-        if (!isOnline.value) {
+        if (!isCurrentlyOnline()) {
             emitOfflineMessage()
             return
         }
@@ -875,8 +934,12 @@ class LumiereViewModel(
             val res = repo.reportComment(comment.id, comment.imageId, reason)
             res.onSuccess {
                 emitMessage(appContext.getString(R.string.report_submitted_message))
-            }.onFailure {
-                emitMessage(appContext.getString(R.string.error_loading_content))
+            }.onFailure { err ->
+                if (!isCurrentlyOnline() || isNetworkOrTimeoutError(err)) {
+                    emitOfflineMessage()
+                } else {
+                    emitMessage(appContext.getString(R.string.error_loading_content))
+                }
             }
         }
     }
@@ -964,7 +1027,7 @@ class LumiereViewModel(
         onSuccess: () -> Unit,
         onReauthRequired: () -> Unit
     ) {
-        if (!isOnline.value) {
+        if (!isCurrentlyOnline()) {
             emitOfflineMessage()
             return
         }
@@ -983,6 +1046,8 @@ class LumiereViewModel(
                     if (err is ReauthRequiredForDeleteException) {
                         emitMessage(appContext.getString(R.string.delete_account_reauth_message))
                         onReauthRequired()
+                    } else if (!isCurrentlyOnline() || isNetworkOrTimeoutError(err)) {
+                        emitOfflineMessage()
                     } else {
                         emitMessage(appContext.getString(R.string.error_loading_content))
                     }

@@ -39,6 +39,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.ads.LumiereBannerAdSlot
 import com.example.model.AdvertisementSettings
@@ -64,12 +66,15 @@ import com.example.model.UiState
 import com.example.ui.components.InspirationGalleryCard
 import com.example.ui.components.ShimmerSkeletonCard
 import com.example.ui.components.pressScaleClickable
-import com.example.ui.theme.AccentViolet
+import com.example.ui.theme.CardBackground
 import com.example.ui.theme.HeartLikeRed
-import com.example.ui.theme.IndigoSoftBorder
-import com.example.ui.theme.IndigoSurfaceDark
+import com.example.ui.theme.InactiveChipText
+import com.example.ui.theme.PrimaryPurple
+import com.example.ui.theme.PrimaryText
 import com.example.ui.theme.PromptAccentGradientBrush
-import com.example.ui.theme.PromptCardSurfaceBrush
+import com.example.ui.theme.SecondaryBackground
+import com.example.ui.theme.SecondaryText
+import com.example.ui.theme.SubtleBorder
 
 @Composable
 fun HomeScreen(
@@ -86,33 +91,39 @@ fun HomeScreen(
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var selectedCategoryId by rememberSaveable { mutableStateOf("all") }
 
-    val publishedCategories = remember(categories) {
-        categories.filter { it.status == "published" && it.name.isNotBlank() }
-            .sortedBy { it.sortOrder }
+    val publishedCategories by remember(categories) {
+        derivedStateOf {
+            categories.filter { it.status == "published" && it.name.isNotBlank() }
+                .sortedBy { it.sortOrder }
+        }
     }
 
-    val allPublishedImages = remember(imagesUiState) {
-        (imagesUiState as? UiState.Success)?.data
-            ?.filter { it.status == "published" }
-            ?.sortedWith(
-                compareByDescending<InspirationImage> { it.createdAt?.seconds ?: 0L }
-                    .thenBy { it.displayOrder }
-            )
-            .orEmpty()
+    val allPublishedImages by remember(imagesUiState) {
+        derivedStateOf {
+            (imagesUiState as? UiState.Success)?.data
+                ?.filter { it.status == "published" }
+                ?.sortedWith(
+                    compareByDescending<InspirationImage> { it.createdAt?.seconds ?: 0L }
+                        .thenBy { it.displayOrder }
+                )
+                .orEmpty()
+        }
     }
 
-    val filteredImages = remember(allPublishedImages, searchQuery, selectedCategoryId) {
-        val query = searchQuery.trim().lowercase()
-        allPublishedImages.filter { img ->
-            val matchesCategory = selectedCategoryId == "all" ||
-                img.categoryId == selectedCategoryId
-            val matchesQuery = query.isEmpty() ||
-                img.title.lowercase().contains(query) ||
-                img.shortName.lowercase().contains(query) ||
-                img.categoryName.lowercase().contains(query) ||
-                img.description.lowercase().contains(query) ||
-                img.keywords.lowercase().contains(query)
-            matchesCategory && matchesQuery
+    val filteredImages by remember(allPublishedImages, searchQuery, selectedCategoryId) {
+        derivedStateOf {
+            val query = searchQuery.trim().lowercase()
+            allPublishedImages.filter { img ->
+                val matchesCategory = selectedCategoryId == "all" ||
+                    img.categoryId == selectedCategoryId
+                val matchesQuery = query.isEmpty() ||
+                    img.title.lowercase().contains(query) ||
+                    img.shortName.lowercase().contains(query) ||
+                    img.categoryName.lowercase().contains(query) ||
+                    img.description.lowercase().contains(query) ||
+                    img.keywords.lowercase().contains(query)
+                matchesCategory && matchesQuery
+            }
         }
     }
 
@@ -129,47 +140,57 @@ fun HomeScreen(
             contentPadding = PaddingValues(
                 start = 16.dp,
                 end = 16.dp,
-                top = 14.dp,
-                bottom = 104.dp
+                top = 10.dp,
+                bottom = 100.dp
             ),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalItemSpacing = 16.dp
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalItemSpacing = 12.dp
         ) {
-            // 1. Top Row: App Logo + Name "PromptLens" on the left, Bell icon with unread red dot on the right
-            item(span = StaggeredGridItemSpan.FullLine) {
+            // 1. Compact App Header: Deep Navy Background (#0C1035), subtle border (#252B69), no extra glow
+            item(
+                key = "header_row",
+                span = StaggeredGridItemSpan.FullLine,
+                contentType = "header"
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 2.dp),
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(SecondaryBackground, RoundedCornerShape(18.dp))
+                        .border(1.dp, SubtleBorder, RoundedCornerShape(18.dp))
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Image(
                             painter = painterResource(id = R.drawable.ic_promptlens_logo),
                             contentDescription = stringResource(R.string.app_name),
                             modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(14.dp))
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(11.dp))
+                                .border(0.8.dp, SubtleBorder, RoundedCornerShape(11.dp))
                         )
                         Text(
                             text = stringResource(R.string.app_name),
-                            style = MaterialTheme.typography.titleLarge,
-                            color = Color.White,
-                            fontWeight = FontWeight.SemiBold
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 21.sp
+                            ),
+                            color = PrimaryText
                         )
                     }
 
-                    // Bell icon button with small red dot when unread notifications exist
+                    // Notification Icon (White / soft Lavender) with unread red indicator
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
-                            .background(PromptCardSurfaceBrush, CircleShape)
-                            .border(1.dp, IndigoSoftBorder, CircleShape)
+                            .background(CardBackground, CircleShape)
+                            .border(1.dp, SubtleBorder, CircleShape)
                             .pressScaleClickable(onClick = onOpenNotifications)
                             .testTag("home_notifications_bell_button"),
                         contentAlignment = Alignment.Center
@@ -177,15 +198,15 @@ fun HomeScreen(
                         Icon(
                             imageVector = Icons.Outlined.Notifications,
                             contentDescription = stringResource(R.string.notifications_title),
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp)
+                            tint = PrimaryText,
+                            modifier = Modifier.size(20.dp)
                         )
                         if (hasUnreadNotifications) {
                             Box(
                                 modifier = Modifier
-                                    .size(9.dp)
+                                    .size(8.dp)
                                     .align(Alignment.TopEnd)
-                                    .offset(x = (-9).dp, y = 9.dp)
+                                    .offset(x = (-8).dp, y = 8.dp)
                                     .clip(CircleShape)
                                     .background(HeartLikeRed)
                                     .testTag("home_unread_bell_dot")
@@ -195,8 +216,12 @@ fun HomeScreen(
                 }
             }
 
-            // 2. Pill-shaped Search Bar (placeholder "Search")
-            item(span = StaggeredGridItemSpan.FullLine) {
+            // 2. Slim Search Bar: Height 54dp (52–56dp), Background #11164A, Border #252B69, Icon & Placeholder #A8ACD1, Radius 20dp
+            item(
+                key = "search_bar",
+                span = StaggeredGridItemSpan.FullLine,
+                contentType = "search"
+            ) {
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
@@ -204,14 +229,15 @@ fun HomeScreen(
                         Text(
                             text = stringResource(R.string.search_placeholder),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = SecondaryText
                         )
                     },
                     leadingIcon = {
                         Icon(
                             imageVector = Icons.Default.Search,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            tint = SecondaryText,
+                            modifier = Modifier.size(20.dp)
                         )
                     },
                     trailingIcon = {
@@ -223,31 +249,37 @@ fun HomeScreen(
                                 Icon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    tint = SecondaryText,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
                     },
                     singleLine = true,
-                    shape = RoundedCornerShape(50),
+                    shape = RoundedCornerShape(20.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AccentViolet,
-                        unfocusedBorderColor = IndigoSoftBorder,
-                        focusedContainerColor = IndigoSurfaceDark,
-                        unfocusedContainerColor = IndigoSurfaceDark,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
+                        focusedBorderColor = PrimaryPurple,
+                        unfocusedBorderColor = SubtleBorder,
+                        focusedContainerColor = CardBackground,
+                        unfocusedContainerColor = CardBackground,
+                        focusedTextColor = PrimaryText,
+                        unfocusedTextColor = PrimaryText
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .height(54.dp)
                         .testTag("home_search_input")
                 )
             }
 
-            // 3. Horizontally scrollable row of pill category chips (first chip "All"; selected = accent gradient; name only)
-            item(span = StaggeredGridItemSpan.FullLine) {
+            // 3. Category Filter Row: Height 40dp (38–42dp), Radius 22dp, Active = #713CFF → #258BFF & White text, Inactive = #11164A & #B8BCE0
+            item(
+                key = "category_row",
+                span = StaggeredGridItemSpan.FullLine,
+                contentType = "categories"
+            ) {
                 LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(vertical = 2.dp),
                     modifier = Modifier.testTag("home_category_row")
                 ) {
@@ -273,18 +305,20 @@ fun HomeScreen(
                 }
             }
 
-            // 4. ONE Uniform Staggered 2-Column Grid of all published posts, newest first
+            // 4. Two Column Image Gallery (12dp gap, 20dp corner radius, 4:5 aspect ratio)
             when (imagesUiState) {
                 is UiState.Loading -> {
-                    items(6) { index ->
-                        ShimmerSkeletonCard(
-                            aspectRatio = if (index % 2 == 0) 0.74f else 0.88f
-                        )
+                    items(6, key = { "shimmer_$it" }, contentType = { "shimmer" }) {
+                        ShimmerSkeletonCard(aspectRatio = 0.8f)
                     }
                 }
 
                 is UiState.Error -> {
-                    item(span = StaggeredGridItemSpan.FullLine) {
+                    item(
+                        key = "error_state",
+                        span = StaggeredGridItemSpan.FullLine,
+                        contentType = "error"
+                    ) {
                         HomeErrorState(
                             message = imagesUiState.message,
                             onRetry = onRetrySync
@@ -294,22 +328,37 @@ fun HomeScreen(
 
                 is UiState.Success -> {
                     if (allPublishedImages.isEmpty()) {
-                        item(span = StaggeredGridItemSpan.FullLine) {
+                        item(
+                            key = "empty_all",
+                            span = StaggeredGridItemSpan.FullLine,
+                            contentType = "empty"
+                        ) {
                             HomeEmptyState(
                                 title = stringResource(R.string.empty_inspirations)
                             )
                         }
                     } else if (filteredImages.isEmpty()) {
-                        item(span = StaggeredGridItemSpan.FullLine) {
+                        item(
+                            key = "empty_filtered",
+                            span = StaggeredGridItemSpan.FullLine,
+                            contentType = "empty"
+                        ) {
                             HomeEmptyState(
                                 title = stringResource(R.string.empty_search_results)
                             )
                         }
                     } else {
-                        items(filteredImages, key = { it.id }) { image ->
+                        items(
+                            items = filteredImages,
+                            key = { it.id },
+                            contentType = { "image_card" }
+                        ) { image ->
+                            val isLiked by remember(likedIds, image.id) {
+                                derivedStateOf { likedIds.contains(image.id) }
+                            }
                             InspirationGalleryCard(
                                 image = image,
-                                isLiked = likedIds.contains(image.id),
+                                isLiked = isLiked,
                                 onClick = { onImageClick(image) }
                             )
                         }
@@ -324,7 +373,7 @@ fun HomeScreen(
             enabledForPlacement = advertisementSettings.homeBannerEnabled,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 92.dp)
+                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 88.dp)
                 .testTag("home_bottom_banner_ad")
         )
     }
@@ -337,29 +386,32 @@ private fun CategoryPillChip(
     onClick: () -> Unit,
     testTag: String
 ) {
-    val pillShape = RoundedCornerShape(50)
+    val chipShape = RoundedCornerShape(22.dp)
     Box(
         modifier = Modifier
-            .clip(pillShape)
+            .height(40.dp)
+            .clip(chipShape)
             .then(
                 if (selected) {
-                    Modifier.background(PromptAccentGradientBrush, pillShape)
+                    Modifier.background(PromptAccentGradientBrush, chipShape)
                 } else {
                     Modifier
-                        .background(IndigoSurfaceDark, pillShape)
-                        .border(1.dp, IndigoSoftBorder, pillShape)
+                        .background(CardBackground, chipShape)
+                        .border(1.dp, SubtleBorder, chipShape)
                 }
             )
             .pressScaleClickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 10.dp)
+            .padding(horizontal = 16.dp)
             .testTag(testTag),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontSize = 13.5.sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+            ),
+            color = if (selected) Color.White else InactiveChipText,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -372,12 +424,12 @@ private fun HomeEmptyState(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = IndigoSurfaceDark,
-        border = BorderStroke(1.dp, IndigoSoftBorder),
+        shape = RoundedCornerShape(24.dp),
+        color = CardBackground,
+        border = BorderStroke(1.dp, SubtleBorder),
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 32.dp)
+            .padding(vertical = 24.dp)
     ) {
         Column(
             modifier = Modifier
@@ -389,14 +441,14 @@ private fun HomeEmptyState(
             Icon(
                 imageVector = Icons.Outlined.ImageSearch,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                modifier = Modifier.size(44.dp)
+                tint = SecondaryText.copy(alpha = 0.8f),
+                modifier = Modifier.size(42.dp)
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = SecondaryText,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center
             )
@@ -411,12 +463,12 @@ private fun HomeErrorState(
     modifier: Modifier = Modifier
 ) {
     Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = IndigoSurfaceDark,
-        border = BorderStroke(1.dp, IndigoSoftBorder),
+        shape = RoundedCornerShape(24.dp),
+        color = CardBackground,
+        border = BorderStroke(1.dp, SubtleBorder),
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 32.dp)
+            .padding(vertical = 24.dp)
     ) {
         Column(
             modifier = Modifier
@@ -428,15 +480,15 @@ private fun HomeErrorState(
             Text(
                 text = message,
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = SecondaryText,
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(16.dp))
             Button(
                 onClick = onRetry,
-                shape = RoundedCornerShape(50),
+                shape = RoundedCornerShape(28.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = AccentViolet,
+                    containerColor = PrimaryPurple,
                     contentColor = Color.White
                 ),
                 modifier = Modifier.testTag("home_retry_button")

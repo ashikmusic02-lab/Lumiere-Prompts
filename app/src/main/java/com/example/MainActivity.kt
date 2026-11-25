@@ -16,6 +16,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -25,6 +27,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -37,6 +40,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -77,6 +81,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -98,7 +104,7 @@ import com.example.auth.GoogleSignInManager
 import com.example.model.InspirationImage
 import com.example.model.ThemePreference
 import com.example.model.UiState
-import com.example.notifications.OneSignalDeepLinkManager
+import com.example.notifications.PromptLensDeepLinkManager
 import com.example.ui.LumiereViewModel
 import com.example.ui.components.pressScaleClickable
 import com.example.ui.screens.AiToolsScreen
@@ -154,7 +160,7 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
 
         // Hold native Android SplashScreen only until cached data is read from local storage
-        // (with a strict <450ms cap so it never waits for network, auth, ads, UMP, or OneSignal).
+        // (with a strict <450ms cap so it never waits for network, auth, ads, UMP, or FCM).
         val contentView: View = findViewById(android.R.id.content)
         contentView.viewTreeObserver.addOnPreDrawListener(
             object : ViewTreeObserver.OnPreDrawListener {
@@ -177,7 +183,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Handle deep link intent extras immediately without network calls
-        OneSignalDeepLinkManager.handleIncomingIntent(intent)
+        PromptLensDeepLinkManager.handleIncomingIntent(intent)
 
         setContent {
             val context = LocalContext.current
@@ -204,13 +210,13 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // Initialize Firebase anonymous session, AdMob, UMP consent, and OneSignal in the background
+            // Initialize Firebase anonymous session, AdMob, UMP consent, and FCM in the background
             // AFTER the first frame so startup is instant and never blocked.
             LaunchedEffect(Unit) {
                 withFrameNanos { }
-                // 1. Background OneSignal init
+                // 1. Background FCM channel & topic init
                 withContext(Dispatchers.IO) {
-                    runCatching { OneSignalDeepLinkManager.initialize(applicationContext) }
+                    runCatching { PromptLensDeepLinkManager.initialize(applicationContext) }
                 }
                 // 2. Background UMP & AdMob init
                 runCatching { AdMobManager.requestConsentAndInitializeAds(this@MainActivity) }
@@ -294,7 +300,7 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        OneSignalDeepLinkManager.handleIncomingIntent(intent)
+        PromptLensDeepLinkManager.handleIncomingIntent(intent)
     }
 }
 
@@ -329,7 +335,8 @@ fun PromptLensAppRoot(
     val currentUserId by viewModel.currentUserIdFlow.collectAsStateWithLifecycle()
     val notificationPermissionAsked by viewModel.notificationPermissionAsked.collectAsStateWithLifecycle()
     val isAdPrivacyRequired by AdMobManager.isPrivacyOptionsRequiredFlow.collectAsStateWithLifecycle()
-    val pendingDeepLinkImageId by OneSignalDeepLinkManager.pendingImageDeepLink.collectAsStateWithLifecycle()
+    val isInitialCacheLoaded by viewModel.isInitialCacheLoaded.collectAsStateWithLifecycle()
+    val pendingDeepLinkImageId by PromptLensDeepLinkManager.pendingImageDeepLink.collectAsStateWithLifecycle()
 
     var currentTab by rememberSaveable { mutableStateOf(PromptLensNavTab.HOME) }
     var activeDetailImageId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -415,10 +422,10 @@ fun PromptLensAppRoot(
         }
     }
 
-    // Handle deep links from OneSignal push notifications or promptlens://image/{imageId}
-    LaunchedEffect(pendingDeepLinkImageId, imagesUiState) {
+    // Handle deep links from FCM push notifications or promptlens://image/{imageId}
+    LaunchedEffect(pendingDeepLinkImageId, imagesUiState, isInitialCacheLoaded) {
         val targetId = pendingDeepLinkImageId ?: return@LaunchedEffect
-        if (imagesUiState is UiState.Loading) return@LaunchedEffect
+        if (!isInitialCacheLoaded && imagesUiState is UiState.Loading) return@LaunchedEffect
 
         val resolved = viewModel.resolveDeepLinkImage(targetId, allImages)
         if (resolved != null) {
@@ -427,7 +434,8 @@ fun PromptLensAppRoot(
             activeDetailImageId = resolved.id
             viewModel.onImageDetailOpened(resolved)
             viewModel.observeCommentsForImage(resolved.id)
-        } else {
+            PromptLensDeepLinkManager.consumeDeepLink()
+        } else if (imagesUiState !is UiState.Loading) {
             Toast.makeText(
                 context,
                 context.getString(R.string.post_no_longer_available),
@@ -436,8 +444,8 @@ fun PromptLensAppRoot(
             activeDetailImageId = null
             isNotificationsScreenOpen = false
             currentTab = PromptLensNavTab.HOME
+            PromptLensDeepLinkManager.consumeDeepLink()
         }
-        OneSignalDeepLinkManager.consumeDeepLink()
     }
 
     val activeDetailImage = remember(activeDetailImageId, allImages, deepLinkedFallbackImage) {
@@ -449,23 +457,26 @@ fun PromptLensAppRoot(
         }
     }
 
-    // Re-attach comments stream after process death or rotation when a detail image is active
+    // Re-attach comments stream after process death or rotation when a detail image is active,
+    // and cancel the Firestore listener immediately when leaving the detail screen.
     LaunchedEffect(activeDetailImageId) {
         val id = activeDetailImageId
         if (!id.isNullOrBlank()) {
             viewModel.observeCommentsForImage(id)
+        } else {
+            viewModel.stopObservingComments()
         }
     }
 
     // Handle process-death restoration or server-side deletion of the active detail post
-    LaunchedEffect(activeDetailImageId, imagesUiState) {
+    LaunchedEffect(activeDetailImageId, imagesUiState, isInitialCacheLoaded) {
         val id = activeDetailImageId ?: return@LaunchedEffect
-        if (imagesUiState is UiState.Loading) return@LaunchedEffect
+        if (!isInitialCacheLoaded && imagesUiState is UiState.Loading) return@LaunchedEffect
         if (allImages.none { it.id == id } && deepLinkedFallbackImage?.id != id) {
             val resolved = viewModel.resolveDeepLinkImage(id, allImages)
             if (resolved != null) {
                 deepLinkedFallbackImage = resolved
-            } else {
+            } else if (imagesUiState !is UiState.Loading) {
                 activeDetailImageId = null
             }
         }
@@ -590,6 +601,7 @@ fun PromptLensAppRoot(
                             appConfigSettings = appConfigSettings,
                             onBack = {
                                 viewModel.clearActiveDetailPrompt()
+                                viewModel.stopObservingComments()
                                 activeDetailImageId = null
                             },
                             onToggleLike = {
@@ -653,7 +665,7 @@ fun PromptLensAppRoot(
                                         Toast.LENGTH_SHORT
                                     ).show()
                                 } else {
-                                    OneSignalDeepLinkManager.dispatchDeepLinkImageId(targetImageId)
+                                    PromptLensDeepLinkManager.dispatchDeepLinkImageId(targetImageId)
                                 }
                             },
                             onBack = {
@@ -779,25 +791,26 @@ private fun PromptLensFloatingBottomNavigationBar(
     currentTab: PromptLensNavTab,
     onTabSelected: (PromptLensNavTab) -> Unit
 ) {
+    val navBarShape = RoundedCornerShape(30.dp)
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(start = 12.dp, end = 12.dp, bottom = 12.dp, top = 4.dp)
+            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp, top = 4.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(68.dp)
+                .height(64.dp)
                 .shadow(
-                    elevation = 16.dp,
-                    shape = RoundedCornerShape(28.dp),
-                    ambientColor = AccentViolet.copy(alpha = 0.28f),
-                    spotColor = AccentBlue.copy(alpha = 0.28f)
+                    elevation = 8.dp,
+                    shape = navBarShape,
+                    ambientColor = Color.Black.copy(alpha = 0.28f),
+                    spotColor = Color.Black.copy(alpha = 0.28f)
                 )
-                .clip(RoundedCornerShape(28.dp))
-                .background(PromptCardSurfaceBrush)
-                .border(1.dp, IndigoSoftBorder, RoundedCornerShape(28.dp))
+                .clip(navBarShape)
+                .background(IndigoSurfaceTop, navBarShape)
+                .border(1.dp, IndigoSoftBorder, navBarShape)
                 .padding(horizontal = 10.dp, vertical = 8.dp)
                 .testTag("bottom_navigation_bar"),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -813,50 +826,45 @@ private fun PromptLensFloatingBottomNavigationBar(
                 val selected = currentTab == tab
                 val label = stringResource(tab.titleRes)
 
-                if (selected) {
-                    Row(
-                        modifier = Modifier
-                            .height(46.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(PromptAccentGradientBrush)
-                            .pressScaleClickable { onTabSelected(tab) }
-                            .padding(horizontal = 14.dp)
-                            .testTag(tab.testTag),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(7.dp)
-                    ) {
-                        Icon(
-                            imageVector = tab.selectedIcon,
-                            contentDescription = label,
-                            tint = TextPureWhite,
-                            modifier = Modifier.size(20.dp)
+                Row(
+                    modifier = Modifier
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(26.dp))
+                        .then(
+                            if (selected) {
+                                Modifier.background(PromptAccentGradientBrush, RoundedCornerShape(26.dp))
+                            } else {
+                                Modifier
+                            }
                         )
+                        .pressScaleClickable { onTabSelected(tab) }
+                        .animateContentSize(animationSpec = tween(durationMillis = 220))
+                        .padding(horizontal = if (selected) 14.dp else 11.dp)
+                        .testTag(tab.testTag),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    if (tab == PromptLensNavTab.AI_TOOLS) {
+                        AiToolsNavBadgeIcon(selected = selected)
+                    } else {
+                        Icon(
+                            imageVector = if (selected) tab.selectedIcon else tab.unselectedIcon,
+                            contentDescription = label,
+                            tint = if (selected) Color.White else TextLavenderGray,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    if (selected) {
                         Text(
                             text = label,
                             style = MaterialTheme.typography.labelLarge.copy(
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = cappedLabelSizeSp
                             ),
-                            color = TextPureWhite,
+                            color = Color.White,
                             maxLines = 1,
                             softWrap = false,
                             overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(50))
-                            .pressScaleClickable { onTabSelected(tab) }
-                            .testTag(tab.testTag),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = tab.unselectedIcon,
-                            contentDescription = label,
-                            tint = TextLavenderGray,
-                            modifier = Modifier.size(22.dp)
                         )
                     }
                 }
@@ -864,3 +872,94 @@ private fun PromptLensFloatingBottomNavigationBar(
         }
     }
 }
+
+@Composable
+private fun AiToolsNavBadgeIcon(selected: Boolean) {
+    val scaleAnim = remember { Animatable(1f) }
+    var previousSelected by remember { mutableStateOf(selected) }
+
+    LaunchedEffect(selected) {
+        if (selected && !previousSelected) {
+            scaleAnim.snapTo(1f)
+            scaleAnim.animateTo(
+                targetValue = 1.12f,
+                animationSpec = tween(durationMillis = 110)
+            )
+            scaleAnim.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 130)
+            )
+        } else if (!selected) {
+            scaleAnim.snapTo(1f)
+        }
+        previousSelected = selected
+    }
+
+    val badgeShape = RoundedCornerShape(8.dp)
+    val inactiveColor = Color(0xFFA8ACD1)
+
+    Box(
+        modifier = Modifier
+            .size(26.dp)
+            .graphicsLayer {
+                scaleX = scaleAnim.value
+                scaleY = scaleAnim.value
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(badgeShape)
+                .then(
+                    if (selected) {
+                        Modifier
+                            .background(PromptAccentGradientBrush, badgeShape)
+                            .border(1.dp, Color.White.copy(alpha = 0.38f), badgeShape)
+                    } else {
+                        Modifier.border(1.5.dp, inactiveColor, badgeShape)
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "AI",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    lineHeight = 11.sp,
+                    letterSpacing = 0.3.sp
+                ),
+                color = if (selected) Color.White else inactiveColor,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+
+        // Tiny 4-point sparkle at the top-right corner when selected
+        if (selected) {
+            Canvas(
+                modifier = Modifier
+                    .size(8.dp)
+                    .align(Alignment.TopEnd)
+                    .offset(x = 2.dp, y = (-2).dp)
+            ) {
+                val w = size.width
+                val h = size.height
+                val cx = w / 2f
+                val cy = h / 2f
+                val inner = w * 0.18f
+                val path = Path().apply {
+                    moveTo(cx, 0f)
+                    quadraticTo(cx + inner * 0.4f, cy - inner * 0.4f, w, cy)
+                    quadraticTo(cx + inner * 0.4f, cy + inner * 0.4f, cx, h)
+                    quadraticTo(cx - inner * 0.4f, cy + inner * 0.4f, 0f, cy)
+                    quadraticTo(cx - inner * 0.4f, cy - inner * 0.4f, cx, 0f)
+                    close()
+                }
+                drawPath(path = path, color = Color.White)
+            }
+        }
+    }
+}
+
