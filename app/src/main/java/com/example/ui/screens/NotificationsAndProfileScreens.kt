@@ -88,7 +88,6 @@ import com.example.model.AppLinks
 import com.example.model.MergedNotificationItem
 import com.example.model.ThemePreference
 import com.example.ui.components.LumiereExternalImage
-import com.example.ui.components.openInAppCustomTab
 import com.example.ui.components.pressScaleClickable
 import com.example.ui.theme.AccentBlue
 import com.example.ui.theme.AccentViolet
@@ -537,6 +536,7 @@ fun ProfileScreen(
     val isSignedInWithGoogle = firebaseUser != null && !firebaseUser.isAnonymous
 
     var showLanguageDialog by remember { mutableStateOf(false) }
+    var showPrivacyPolicyDialog by remember { mutableStateOf(false) }
     var showTermsDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
@@ -632,6 +632,82 @@ fun ProfileScreen(
                     Text(
                         text = stringResource(R.string.cancel_action),
                         color = TextLavenderGray
+                    )
+                }
+            }
+        )
+    }
+
+    if (showPrivacyPolicyDialog) {
+        AlertDialog(
+            onDismissRequest = { showPrivacyPolicyDialog = false },
+            containerColor = IndigoSurfaceTop,
+            titleContentColor = TextPureWhite,
+            textContentColor = TextLavenderGray,
+            shape = RoundedCornerShape(28.dp),
+            title = {
+                Text(
+                    text = stringResource(R.string.privacy_policy_label),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.privacy_services_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPureWhite
+                    )
+                    Text(
+                        text = stringResource(R.string.privacy_services_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextLavenderGray
+                    )
+                    Text(
+                        text = stringResource(R.string.privacy_data_use_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPureWhite
+                    )
+                    Text(
+                        text = stringResource(R.string.privacy_data_use_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextLavenderGray
+                    )
+                    Text(
+                        text = stringResource(R.string.privacy_children_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPureWhite
+                    )
+                    Text(
+                        text = stringResource(R.string.privacy_children_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextLavenderGray
+                    )
+                    Text(
+                        text = stringResource(R.string.privacy_contact_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPureWhite
+                    )
+                    Text(
+                        text = stringResource(R.string.privacy_contact_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextLavenderGray
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPrivacyPolicyDialog = false }) {
+                    Text(
+                        text = stringResource(R.string.back_action),
+                        color = TextPureWhite
                     )
                 }
             }
@@ -1055,24 +1131,20 @@ fun ProfileScreen(
                     }
                 )
 
-                // Privacy policy (hidden while PRIVACY_POLICY_URL is blank)
-                if (AppLinks.PRIVACY_POLICY_URL.isNotBlank()) {
-                    HorizontalDivider(
-                        color = IndigoSoftBorder,
-                        thickness = 0.8.dp,
-                        modifier = Modifier.padding(horizontal = 20.dp)
-                    )
+                HorizontalDivider(
+                    color = IndigoSoftBorder,
+                    thickness = 0.8.dp,
+                    modifier = Modifier.padding(horizontal = 20.dp)
+                )
 
-                    ProfileMenuRow(
-                        icon = Icons.Default.Policy,
-                        badgeColor = BadgeShieldGreen,
-                        label = stringResource(R.string.privacy_policy_label),
-                        testTag = "profile_row_privacy_policy",
-                        onClick = {
-                            openInAppCustomTab(context, AppLinks.PRIVACY_POLICY_URL)
-                        }
-                    )
-                }
+                // Privacy policy
+                ProfileMenuRow(
+                    icon = Icons.Default.Policy,
+                    badgeColor = BadgeShieldGreen,
+                    label = stringResource(R.string.privacy_policy_label),
+                    testTag = "profile_row_privacy_policy",
+                    onClick = { showPrivacyPolicyDialog = true }
+                )
 
                 HorizontalDivider(
                     color = IndigoSoftBorder,

@@ -27,10 +27,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -649,13 +652,24 @@ object AdMobManager {
      * 4. The App Open ad is ALREADY loaded (never blocks startup; if not ready, skips silently and preloads)
      * 5. At least 30 minutes have passed since the last App Open ad was shown
      */
-    fun showAppOpenAdIfEligible(activity: Activity, settings: AdvertisementSettings) {
-        if (activity.isFinishing || activity.isDestroyed) return
-        if (markAndCheckIsFirstLaunchSession(activity)) {
-            preloadAppOpenAdIfNeeded(activity, settings)
+    fun showAppOpenAdIfEligible(
+        activity: Activity,
+        settings: AdvertisementSettings,
+        onComplete: () -> Unit = {}
+    ) {
+        if (activity.isFinishing || activity.isDestroyed) {
+            onComplete()
             return
         }
-        if (isShowingFullScreenAd) return
+        if (markAndCheckIsFirstLaunchSession(activity)) {
+            preloadAppOpenAdIfNeeded(activity, settings)
+            onComplete()
+            return
+        }
+        if (isShowingFullScreenAd) {
+            onComplete()
+            return
+        }
 
         val unitId = resolveAppOpenUnitId(settings)
         if (unitId.isBlank() || !canRequestAds(activity)) {
@@ -663,6 +677,7 @@ object AdMobManager {
                 cachedAppOpenAd = null
                 cachedAppOpenUnitId = null
             }
+            onComplete()
             return
         }
 
@@ -671,6 +686,7 @@ object AdMobManager {
         val now = System.currentTimeMillis()
         if (lastShownMs > 0L && (now - lastShownMs) < APP_OPEN_COOLDOWN_MS) {
             preloadAppOpenAdIfNeeded(activity, settings)
+            onComplete()
             return
         }
 
@@ -682,6 +698,7 @@ object AdMobManager {
         if (!isAdFresh || ad == null) {
             cachedAppOpenAd = null
             preloadAppOpenAdIfNeeded(activity, settings)
+            onComplete()
             return
         }
 
@@ -689,15 +706,25 @@ object AdMobManager {
         isShowingFullScreenAd = true
         prefs.edit().putLong(KEY_LAST_APP_OPEN_SHOWN_MS, now).apply()
 
+        var completed = false
+        val finishOnce: () -> Unit = {
+            if (!completed) {
+                completed = true
+                onComplete()
+            }
+        }
+
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdDismissedFullScreenContent() {
                 isShowingFullScreenAd = false
                 preloadAppOpenAdIfNeeded(activity, settings)
+                finishOnce()
             }
 
             override fun onAdFailedToShowFullScreenContent(adError: AdError) {
                 isShowingFullScreenAd = false
                 preloadAppOpenAdIfNeeded(activity, settings)
+                finishOnce()
             }
         }
         runCatching {
@@ -705,6 +732,7 @@ object AdMobManager {
         }.onFailure {
             isShowingFullScreenAd = false
             preloadAppOpenAdIfNeeded(activity, settings)
+            finishOnce()
         }
     }
 
@@ -1133,10 +1161,108 @@ fun LumiereBannerAdSlot(
     }
 }
 
+/**
+ * Plain Home Banner Ad slot without any surrounding box/container or reserved empty space:
+ * - Shows nothing (0dp) when disabled, loading, or failed.
+ * - When the ad loads, renders the banner directly using [loadedModifier].
+ */
+@Composable
+fun HomePlainBannerAdSlot(
+    settings: AdvertisementSettings,
+    enabledForPlacement: Boolean,
+    loadedModifier: Modifier = Modifier,
+    onAdLoadedChanged: (Boolean) -> Unit = {},
+    testTagName: String = "home_bottom_banner_ad"
+) {
+    val context = LocalContext.current
+    val canRequestAds by AdMobManager.canRequestAdsFlow.collectAsStateWithFallback(
+        initial = AdMobManager.canRequestAds(context)
+    )
+    val primaryUnitId = remember(settings) {
+        AdMobManager.resolveBannerUnitId(settings)
+    }
+
+    val shouldShowSlot = settings.allAdsEnabled &&
+        enabledForPlacement &&
+        primaryUnitId.isNotBlank()
+
+    var isAdLoaded by remember(primaryUnitId, shouldShowSlot, canRequestAds) { mutableStateOf(false) }
+    var adFailedPermanently by remember(primaryUnitId, shouldShowSlot, canRequestAds) { mutableStateOf(false) }
+
+    LaunchedEffect(shouldShowSlot, isAdLoaded, adFailedPermanently) {
+        onAdLoadedChanged(shouldShowSlot && isAdLoaded && !adFailedPermanently)
+    }
+
+    if (!shouldShowSlot || adFailedPermanently) return
+
+    val adView = remember(primaryUnitId, canRequestAds) {
+        if (!canRequestAds) {
+            null
+        } else {
+            AdMobManager.ensureMobileAdsInitialized(context)
+            AdView(context).apply {
+                setAdSize(AdSize.BANNER)
+                adUnitId = primaryUnitId
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                adListener = object : AdListener() {
+                    override fun onAdLoaded() {
+                        adFailedPermanently = false
+                        isAdLoaded = true
+                        AdMobManager.silenceWebViewsRecursively(this@apply)
+                    }
+
+                    override fun onAdFailedToLoad(error: LoadAdError) {
+                        isAdLoaded = false
+                        adFailedPermanently = true
+                    }
+                }
+                AdMobManager.silenceWebViewsRecursively(this)
+                runCatching { loadAd(AdRequest.Builder().build()) }
+                    .onFailure {
+                        isAdLoaded = false
+                        adFailedPermanently = true
+                    }
+            }
+        }
+    }
+
+    DisposableEffect(adView) {
+        onDispose {
+            onAdLoadedChanged(false)
+            runCatching { adView?.destroy() }
+        }
+    }
+
+    if (adView != null) {
+        Box(
+            modifier = if (isAdLoaded) {
+                loadedModifier
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+                    .testTag(testTagName)
+            } else {
+                Modifier.size(0.dp)
+            },
+            contentAlignment = Alignment.Center
+        ) {
+            AndroidView(
+                factory = {
+                    (adView.parent as? ViewGroup)?.removeView(adView)
+                    adView
+                },
+                modifier = if (isAdLoaded) Modifier.fillMaxWidth() else Modifier.size(0.dp)
+            )
+        }
+    }
+}
+
 @Composable
 private fun <T> StateFlow<T>.collectAsStateWithFallback(initial: T): androidx.compose.runtime.State<T> {
     val state = remember { mutableStateOf(initial) }
-    androidx.compose.runtime.LaunchedEffect(this) {
+    LaunchedEffect(this) {
         collect { state.value = it }
     }
     return state

@@ -28,6 +28,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -73,6 +74,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -87,6 +89,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -149,32 +152,10 @@ enum class PromptLensNavTab(
 
 class MainActivity : AppCompatActivity() {
 
-    @Volatile
-    private var isCacheReadyForSplashDismiss = false
-    private var splashStartTimeMs = 0L
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        splashStartTimeMs = System.currentTimeMillis()
         AdMobManager.purgeCorruptedWebViewVariationsSeeds(this)
         enableEdgeToEdge()
-
-        // Hold native Android SplashScreen only until cached data is read from local storage
-        // (with a strict <450ms cap so it never waits for network, auth, ads, UMP, or FCM).
-        val contentView: View = findViewById(android.R.id.content)
-        contentView.viewTreeObserver.addOnPreDrawListener(
-            object : ViewTreeObserver.OnPreDrawListener {
-                override fun onPreDraw(): Boolean {
-                    val elapsed = System.currentTimeMillis() - splashStartTimeMs
-                    return if (isCacheReadyForSplashDismiss || elapsed >= 450L) {
-                        contentView.viewTreeObserver.removeOnPreDrawListener(this)
-                        true
-                    } else {
-                        false
-                    }
-                }
-            }
-        )
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             splashScreen.setOnExitAnimationListener { splashScreenView ->
@@ -202,13 +183,6 @@ class MainActivity : AppCompatActivity() {
             val viewModel: LumiereViewModel = viewModel(
                 factory = LumiereViewModel.factory(currentUser?.uid)
             )
-
-            val isInitialCacheLoaded by viewModel.isInitialCacheLoaded.collectAsStateWithLifecycle()
-            LaunchedEffect(isInitialCacheLoaded) {
-                if (isInitialCacheLoaded) {
-                    isCacheReadyForSplashDismiss = true
-                }
-            }
 
             // Initialize Firebase anonymous session, AdMob, UMP consent, and FCM in the background
             // AFTER the first frame so startup is instant and never blocked.
@@ -342,6 +316,8 @@ fun PromptLensAppRoot(
     var activeDetailImageId by rememberSaveable { mutableStateOf<String?>(null) }
     var isNotificationsScreenOpen by rememberSaveable { mutableStateOf(false) }
     var deepLinkedFallbackImage by remember { mutableStateOf<InspirationImage?>(null) }
+    var isStartupLogoShowing by rememberSaveable { mutableStateOf(true) }
+    val latestAdSettings by rememberUpdatedState(advertisementSettings)
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -369,21 +345,28 @@ fun PromptLensAppRoot(
         AdMobManager.preloadRewardedAdIfNeeded(context, advertisementSettings)
         AdMobManager.preloadInterstitialIfNeeded(context, advertisementSettings)
         AdMobManager.preloadAppOpenAdIfNeeded(context, advertisementSettings)
-        // Non-blocking cold-start App Open ad check (wait max 1 second if enabled and not first install launch)
-        if (canRequestAds &&
-            advertisementSettings.allAdsEnabled &&
-            advertisementSettings.appOpenAdsEnabled &&
-            (advertisementSettings.testAdMode || advertisementSettings.appOpenAdUnitId.isNotBlank())
-        ) {
-            delay(950L)
-            AdMobManager.showAppOpenAdIfEligible(activity, advertisementSettings)
+    }
+
+    // App start: show the PromptLens logo on the dark background for 2.5 seconds while loading the App Open ad.
+    // After 2.5s, if the App Open ad is ready and eligible, show it and then open Home; otherwise go directly to Home.
+    LaunchedEffect(Unit) {
+        if (isStartupLogoShowing) {
+            AdMobManager.preloadAppOpenAdIfNeeded(context, latestAdSettings)
+            delay(2500L)
+            AdMobManager.showAppOpenAdIfEligible(
+                activity = activity,
+                settings = latestAdSettings,
+                onComplete = {
+                    isStartupLogoShowing = false
+                }
+            )
         }
     }
 
-    // Show App Open Ad when app returns to foreground (ON_START) if already loaded & eligible (30-min cooldown, not first install launch)
-    DisposableEffect(lifecycleOwner, advertisementSettings) {
+    // Show App Open Ad when app returns to foreground (ON_START) after initial startup if already loaded & eligible (30-min cooldown, not first install launch)
+    DisposableEffect(lifecycleOwner, advertisementSettings, isStartupLogoShowing) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_START) {
+            if (event == Lifecycle.Event.ON_START && !isStartupLogoShowing) {
                 AdMobManager.showAppOpenAdIfEligible(activity, advertisementSettings)
             }
         }
@@ -407,8 +390,8 @@ fun PromptLensAppRoot(
         viewModel.markNotificationPermissionPromptShown()
     }
 
-    LaunchedEffect(allImages.isNotEmpty(), notificationPermissionAsked) {
-        if (allImages.isNotEmpty() && !notificationPermissionAsked && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    LaunchedEffect(allImages.isNotEmpty(), notificationPermissionAsked, isStartupLogoShowing) {
+        if (!isStartupLogoShowing && allImages.isNotEmpty() && !notificationPermissionAsked && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val alreadyGranted = ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.POST_NOTIFICATIONS
@@ -773,6 +756,25 @@ fun PromptLensAppRoot(
                         }
                     }
                 }
+            }
+        }
+
+        // 2.5-second startup screen showing the PromptLens logo on the dark background
+        if (isStartupLogoShowing) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(PromptVerticalBackgroundBrush)
+                    .testTag("startup_logo_screen"),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_promptlens_logo),
+                    contentDescription = stringResource(R.string.app_name),
+                    modifier = Modifier
+                        .size(116.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                )
             }
         }
     }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -58,7 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
-import com.example.ads.LumiereBannerAdSlot
+import com.example.ads.HomePlainBannerAdSlot
 import com.example.model.AdvertisementSettings
 import com.example.model.CategoryItem
 import com.example.model.InspirationImage
@@ -127,6 +128,8 @@ fun HomeScreen(
         }
     }
 
+    var isHomeBannerLoaded by remember { mutableStateOf(false) }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -141,7 +144,7 @@ fun HomeScreen(
                 start = 16.dp,
                 end = 16.dp,
                 top = 10.dp,
-                bottom = 100.dp
+                bottom = if (isHomeBannerLoaded) 12.dp else 100.dp
             ),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalItemSpacing = 12.dp
@@ -367,14 +370,17 @@ fun HomeScreen(
             }
         }
 
-        // Optional Home Banner Ad in its own 20dp rounded container above the floating bottom bar
-        LumiereBannerAdSlot(
+        // Home Banner Ad: no special box/container and no reserved empty space;
+        // shown directly above the bottom menu only when loaded.
+        HomePlainBannerAdSlot(
             settings = advertisementSettings,
             enabledForPlacement = advertisementSettings.homeBannerEnabled,
-            modifier = Modifier
+            onAdLoadedChanged = { loaded -> isHomeBannerLoaded = loaded },
+            loadedModifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 88.dp)
-                .testTag("home_bottom_banner_ad")
+                .navigationBarsPadding()
+                .padding(bottom = 80.dp),
+            testTagName = "home_bottom_banner_ad"
         )
     }
 }

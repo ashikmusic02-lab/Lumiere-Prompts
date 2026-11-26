@@ -127,4 +127,14 @@
     <string name="terms_comments_rules_body">Keep discussions respectful and constructive. Spam, harassment, hate speech, or abusive comments are strictly prohibited and will be removed. Users may report inappropriate comments or block other users at any time.</string>
     <string name="terms_content_rights_title">3. Content Rights</string>
     <string name="terms_content_rights_body">All featured reference images, titles, and prompts remain the property of PromptLens and their respective creators. Prompts may be copied and shared for generating your own creative artwork.</string>
+
+    <!-- Privacy Policy -->
+    <string name="privacy_services_title">1. Services We Use</string>
+    <string name="privacy_services_body">PromptLens uses Google Firebase (Firestore, Authentication, Analytics, and Cloud Messaging) to deliver content and sync your saved posts, likes, and comments. Optional account sign-in is provided via Google Sign-In, and advertisements are served using Google AdMob.</string>
+    <string name="privacy_data_use_title">2. How Data Is Used</string>
+    <string name="privacy_data_use_body">Information collected through Firebase, Google Sign-In, and AdMob is used solely to operate and improve app functionality and display relevant ads. Your personal data is never sold or rented to any third party.</string>
+    <string name="privacy_children_title">3. Children\'s Privacy</string>
+    <string name="privacy_children_body">PromptLens is intended for general audiences and is not directed to children under the age of 13. We do not knowingly collect personal information from children under 13.</string>
+    <string name="privacy_contact_title">4. Contact Us</string>
+    <string name="privacy_contact_body">If you have any questions about this Privacy Policy or wish to request account and data deletion, please contact us at farhadvarietiesstore@gmail.com.</string>
 </resources>

@@ -123,4 +123,14 @@
     <string name="terms_comments_rules_body">আলোচনা সম্মানজনক ও গঠনমূলক রাখুন। স্প্যাম, হয়রানি বা আপত্তিকর মন্তব্য কঠোরভাবে নিষিদ্ধ এবং তা মুছে ফেলা হবে।</string>
     <string name="terms_content_rights_title">৩. কনটেন্ট অধিকার</string>
     <string name="terms_content_rights_body">প্রদর্শিত সমস্ত ছবি, শিরোনাম এবং প্রম্পট PromptLens এবং সংশ্লিষ্ট নির্মাতাদের সম্পত্তি। আপনার নিজস্ব সৃজনশীল কাজের জন্য প্রম্পট কপি ও শেয়ার করা যাবে।</string>
+
+    <!-- Privacy Policy -->
+    <string name="privacy_services_title">১. ব্যবহৃত সেবাসমূহ</string>
+    <string name="privacy_services_body">PromptLens কনটেন্ট সরবরাহ এবং আপনার সেভ করা পোস্ট, লাইক ও মন্তব্য সিঙ্ক করতে Google Firebase ব্যবহার করে। অ্যাকাউন্ট সাইন-ইনের জন্য Google Sign-In এবং বিজ্ঞাপনের জন্য Google AdMob ব্যবহৃত হয়।</string>
+    <string name="privacy_data_use_title">২. তথ্যের ব্যবহার</string>
+    <string name="privacy_data_use_body">সংগৃহীত তথ্য শুধুমাত্র অ্যাপের ফিচার পরিচালনা ও বিজ্ঞাপন প্রদর্শনের জন্য ব্যবহৃত হয়। আপনার কোনো ব্যক্তিগত তথ্য কখনোই তৃতীয় পক্ষের কাছে বিক্রি করা হয় না।</string>
+    <string name="privacy_children_title">৩. শিশুদের গোপনীয়তা</string>
+    <string name="privacy_children_body">PromptLens ১৩ বছরের কম বয়সী শিশুদের জন্য তৈরি নয় এবং আমরা জেনেশুনে ১৩ বছরের কম বয়সী কারও ব্যক্তিগত তথ্য সংগ্রহ করি না।</string>
+    <string name="privacy_contact_title">৪. যোগাযোগ</string>
+    <string name="privacy_contact_body">গোপনীয়তা নীতি বা ডেটা মুছে ফেলার বিষয়ে যেকোনো প্রশ্নের জন্য আমাদের সাথে যোগাযোগ করুন: farhadvarietiesstore@gmail.com।</string>
 </resources>
