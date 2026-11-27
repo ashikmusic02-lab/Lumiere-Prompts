@@ -60,6 +60,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Share
@@ -204,9 +205,12 @@ fun ImageDetailScreen(
     var commentDraft by rememberSaveable(image.id) { mutableStateOf("") }
     var isCommentInputFocused by remember { mutableStateOf(false) }
     var commentToDelete by remember { mutableStateOf<ImageComment?>(null) }
+    var commentToReport by remember { mutableStateOf<ImageComment?>(null) }
+    var reportReasonText by remember { mutableStateOf("") }
 
     val copiedMsg = stringResource(R.string.copied_message)
     val appName = stringResource(R.string.app_name)
+    val defaultReportReason = stringResource(R.string.report_default_reason)
 
     // Springy like-button pop animation when isLiked transitions to true
     val likePopScale = remember { Animatable(1f) }
@@ -317,6 +321,76 @@ fun ImageDetailScreen(
                 TextButton(
                     onClick = { commentToDelete = null },
                     modifier = Modifier.testTag("cancel_delete_comment_button")
+                ) {
+                    Text(
+                        text = stringResource(R.string.cancel_action),
+                        color = TextLavenderGray
+                    )
+                }
+            }
+        )
+    }
+
+    // Report Comment Dialog
+    commentToReport?.let { targetComment ->
+        AlertDialog(
+            onDismissRequest = { commentToReport = null },
+            containerColor = IndigoSurfaceTop,
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Text(
+                    text = stringResource(R.string.report_dialog_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold
+                )
+            },
+            text = {
+                OutlinedTextField(
+                    value = reportReasonText,
+                    onValueChange = { reportReasonText = it },
+                    label = {
+                        Text(
+                            text = stringResource(R.string.report_reason_label),
+                            color = TextLavenderGray
+                        )
+                    },
+                    maxLines = 4,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AccentViolet,
+                        unfocusedBorderColor = IndigoSoftBorder,
+                        focusedContainerColor = IndigoInnerBox,
+                        unfocusedContainerColor = IndigoInnerBox,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("report_reason_input")
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val reason = reportReasonText.trim().ifBlank { defaultReportReason }
+                        onReportComment(targetComment, reason)
+                        commentToReport = null
+                    },
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryPurple,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.testTag("submit_report_comment_button")
+                ) {
+                    Text(stringResource(R.string.submit_action))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { commentToReport = null },
+                    modifier = Modifier.testTag("cancel_report_comment_button")
                 ) {
                     Text(
                         text = stringResource(R.string.cancel_action),
@@ -456,7 +530,11 @@ fun ImageDetailScreen(
                                 isLiked = isCommentLiked,
                                 likeCount = likeCount,
                                 onToggleLike = { onToggleCommentLike(comment) },
-                                onRequestDelete = { commentToDelete = comment }
+                                onRequestDelete = { commentToDelete = comment },
+                                onRequestReport = {
+                                    reportReasonText = defaultReportReason
+                                    commentToReport = comment
+                                }
                             )
                         }
                     }
@@ -1214,7 +1292,8 @@ private fun CommentRowItem(
     isLiked: Boolean,
     likeCount: Int,
     onToggleLike: () -> Unit,
-    onRequestDelete: () -> Unit
+    onRequestDelete: () -> Unit,
+    onRequestReport: () -> Unit
 ) {
     val dateString = remember(comment.createdAt) {
         val seconds = comment.createdAt?.seconds
@@ -1254,7 +1333,7 @@ private fun CommentRowItem(
             .testTag("comment_item_${comment.id}"),
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
-        // Row 1: small circular avatar with first letter, bold user name, small muted date, and 3-dot icon ONLY for own comment
+        // Row 1: small circular avatar with first letter, bold user name, small muted date, and 3-dot icon (Delete for own, Report for others)
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -1305,27 +1384,31 @@ private fun CommentRowItem(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            if (isOwnComment) {
-                Box {
-                    IconButton(
-                        onClick = { menuExpanded = true },
-                        modifier = Modifier
-                            .size(28.dp)
-                            .testTag("comment_more_menu_${comment.id}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = stringResource(R.string.delete_comment),
-                            tint = TextLavenderMuted,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+            Box {
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier
+                        .size(28.dp)
+                        .testTag("comment_more_menu_${comment.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = if (isOwnComment) {
+                            stringResource(R.string.delete_comment)
+                        } else {
+                            stringResource(R.string.report_comment)
+                        },
+                        tint = TextLavenderMuted,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
 
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false },
-                        containerColor = IndigoSurfaceDark
-                    ) {
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                    containerColor = IndigoSurfaceDark
+                ) {
+                    if (isOwnComment) {
                         DropdownMenuItem(
                             text = {
                                 Text(
@@ -1347,6 +1430,29 @@ private fun CommentRowItem(
                                 onRequestDelete()
                             },
                             modifier = Modifier.testTag("delete_comment_${comment.id}")
+                        )
+                    } else {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = stringResource(R.string.report_comment),
+                                    color = TextPureWhite,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Flag,
+                                    contentDescription = null,
+                                    tint = TextLavenderGray,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onRequestReport()
+                            },
+                            modifier = Modifier.testTag("report_comment_${comment.id}")
                         )
                     }
                 }
