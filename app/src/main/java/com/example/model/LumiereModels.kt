@@ -188,6 +188,20 @@ data class ImageComment(
 )
 
 /**
+ * User comment like record stored in `commentLikes/{uid}_{commentId}`.
+ */
+@Immutable
+@Keep
+@IgnoreExtraProperties
+data class CommentLikeRecord(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val commentId: String = "",
+    val imageId: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+/**
  * Moderation report stored in `reports/{reportId}`.
  */
 @Keep

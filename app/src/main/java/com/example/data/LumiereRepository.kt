@@ -9,6 +9,7 @@ import com.example.model.AiToolItem
 import com.example.model.AppConfigSettings
 import com.example.model.AppNotification
 import com.example.model.CategoryItem
+import com.example.model.CommentLikeRecord
 import com.example.model.FavoriteRecord
 import com.example.model.ImageComment
 import com.example.model.ImagePromptDocument
@@ -508,6 +509,37 @@ class LumiereRepository(
     }.flowOn(Dispatchers.Default)
 
     /**
+     * Observes comment likes for an image (`commentLikes` where `imageId == current image id`).
+     */
+    fun observeImageCommentLikes(imageId: String): Flow<List<CommentLikeRecord>> = flow {
+        val uid = auth.currentUser?.uid
+        val path = "commentLikes"
+        emitAll(
+            db.collection(path)
+                .whereEqualTo("imageId", imageId)
+                .snapshots()
+                .map { snapshot ->
+                    snapshot.safeToObjects(CommentLikeRecord::class.java)
+                }
+                .catch { error ->
+                    val firestoreError = generateSequence(error) { it.cause }
+                        .filterIsInstance<FirebaseFirestoreException>()
+                        .firstOrNull()
+                    if (firestoreError == null && error is CancellationException) throw error
+                    if (firestoreError?.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        emit(emptyList())
+                        return@catch
+                    }
+                    val exceptionToLog = firestoreError ?: (error as? Exception)
+                    if (exceptionToLog != null && auth.currentUser?.uid == uid) {
+                        handleFirestoreError(exceptionToLog, OperationType.LIST, path)
+                    }
+                    throw error
+                }
+        )
+    }.flowOn(Dispatchers.Default)
+
+    /**
      * Observes published broadcast notifications using an equality-only filter (`status == "published"`)
      * and sorts newest-first on the client so NO composite index is required.
      */
@@ -939,6 +971,56 @@ class LumiereRepository(
         }
     }
 
+    /**
+     * Likes or unlikes a comment in `commentLikes/{uid}_{commentId}`.
+     * Fields on create: exactly `userId`, `commentId`, `imageId`, `createdAt`.
+     */
+    suspend fun toggleCommentLike(
+        commentId: String,
+        imageId: String,
+        currentlyLiked: Boolean
+    ): Result<Boolean> {
+        val user = try {
+            requireRealUser()
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val uid = user.uid
+        val docId = "${uid}_${commentId}"
+        val path = "commentLikes/$docId"
+        return try {
+            require(isValidDocId(commentId) && isValidDocId(imageId) && isValidDocId(docId)) {
+                "Invalid comment like ID"
+            }
+            withTimeout(WRITE_TIMEOUT_MS) {
+                val docRef = db.collection("commentLikes").document(docId)
+                if (currentlyLiked) {
+                    docRef.delete().await()
+                    Result.success(false)
+                } else {
+                    val payload = mapOf(
+                        "userId" to uid,
+                        "commentId" to commentId,
+                        "imageId" to imageId,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                    docRef.set(payload).await()
+                    Result.success(true)
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: FirebaseFirestoreException) {
+            if (e.code != FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                handleFirestoreError(e, if (currentlyLiked) OperationType.DELETE else OperationType.CREATE, path)
+            }
+            Result.failure(e)
+        } catch (e: Exception) {
+            handleFirestoreError(e, if (currentlyLiked) OperationType.DELETE else OperationType.CREATE, path)
+            Result.failure(e)
+        }
+    }
+
     suspend fun reportComment(commentId: String, imageId: String, reason: String): Result<Unit> {
         val user = try {
             requireRealUser()
@@ -1003,7 +1085,7 @@ class LumiereRepository(
                     runCatching { doc.reference.delete().await() }
                 }
 
-                // 2. Delete user's likes & authored visible comments (allowed for real users)
+                // 2. Delete user's likes, commentLikes & authored visible comments (allowed for real users)
                 if (isReal) {
                     val likesSnap = db.collection("likes")
                         .whereEqualTo("userId", uid)
@@ -1011,6 +1093,16 @@ class LumiereRepository(
                         .await()
                     likesSnap.documents.forEach { doc ->
                         runCatching { doc.reference.delete().await() }
+                    }
+
+                    runCatching {
+                        val commentLikesSnap = db.collection("commentLikes")
+                            .whereEqualTo("userId", uid)
+                            .get(Source.SERVER)
+                            .await()
+                        commentLikesSnap.documents.forEach { doc ->
+                            runCatching { doc.reference.delete().await() }
+                        }
                     }
 
                     val commentsSnap = db.collection("comments")

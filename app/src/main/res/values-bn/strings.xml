@@ -57,6 +57,7 @@
     <string name="no_comments_yet">এখনও কোনো মন্তব্য নেই। প্রথম মন্তব্য করুন!</string>
     <string name="reply_from_promptlens">PromptLens থেকে উত্তর</string>
     <string name="delete_comment">মুছুন</string>
+    <string name="delete_comment_confirm_title">এই মন্তব্যটি মুছে ফেলবেন?</string>
     <string name="report_comment">রিপোর্ট</string>
     <string name="block_user">ব্লক করুন</string>
     <string name="user_blocked_message">ব্যবহারকারীকে ব্লক করা হয়েছে</string>

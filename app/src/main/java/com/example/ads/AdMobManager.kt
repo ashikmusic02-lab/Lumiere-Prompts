@@ -226,8 +226,12 @@ object AdMobManager {
         runCatching {
             val consentInfo = UserMessagingPlatform.getConsentInformation(activity)
 
-            // If previous session already gathered consent, initialize immediately
-            if (runCatching { consentInfo.canRequestAds() }.getOrDefault(false)) {
+            // If previous session already gathered consent or consent is not required, initialize immediately
+            val status = runCatching { consentInfo.consentStatus }.getOrDefault(ConsentInformation.ConsentStatus.UNKNOWN)
+            if (runCatching { consentInfo.canRequestAds() }.getOrDefault(false) ||
+                status == ConsentInformation.ConsentStatus.NOT_REQUIRED ||
+                status == ConsentInformation.ConsentStatus.OBTAINED
+            ) {
                 _canRequestAdsFlow.value = true
                 ensureMobileAdsInitialized(activity)
             }
@@ -359,12 +363,34 @@ object AdMobManager {
         findActivity(context)?.let { attachSilencerToActivity(it) }
     }
 
+    private const val SILENCE_JS_SNIPPET =
+        "try{" +
+            "window.onerror=function(){return true;};" +
+            "window.addEventListener('error',function(e){e.stopImmediatePropagation();e.preventDefault();return true;},true);" +
+            "window.addEventListener('unhandledrejection',function(e){e.stopImmediatePropagation();e.preventDefault();return true;},true);" +
+            "if(window.console){window.console.error=function(){};window.console.warn=function(){};}" +
+            "for(var i=0;i<window.frames.length;i++){" +
+                "try{" +
+                    "window.frames[i].onerror=function(){return true;};" +
+                    "if(window.frames[i].console){window.frames[i].console.error=function(){};window.frames[i].console.warn=function(){};}" +
+                "}catch(fe){}" +
+            "}" +
+        "}catch(e){}"
+
+    private val attachedDecorViews = java.util.Collections.newSetFromMap(java.util.WeakHashMap<View, Boolean>())
+
     private fun attachSilencerToActivity(activity: Activity) {
         runCatching {
             val decorView = activity.window?.decorView ?: return
             silenceWebViewsRecursively(decorView)
-            mainHandler.postDelayed({ silenceWebViewsRecursively(decorView) }, 150L)
-            mainHandler.postDelayed({ silenceWebViewsRecursively(decorView) }, 600L)
+            if (attachedDecorViews.add(decorView)) {
+                decorView.viewTreeObserver?.addOnGlobalLayoutListener {
+                    silenceWebViewsRecursively(decorView)
+                }
+            }
+            mainHandler.postDelayed({ silenceWebViewsRecursively(decorView) }, 100L)
+            mainHandler.postDelayed({ silenceWebViewsRecursively(decorView) }, 350L)
+            mainHandler.postDelayed({ silenceWebViewsRecursively(decorView) }, 900L)
         }
     }
 
@@ -375,16 +401,6 @@ object AdMobManager {
                 silenceSingleWebView(root)
             }
             if (root is ViewGroup) {
-                root.setOnHierarchyChangeListener(object : ViewGroup.OnHierarchyChangeListener {
-                    override fun onChildViewAdded(parent: View?, child: View?) {
-                        silenceWebViewsRecursively(child)
-                        mainHandler.postDelayed({ silenceWebViewsRecursively(child) }, 60L)
-                        mainHandler.postDelayed({ silenceWebViewsRecursively(child) }, 300L)
-                        mainHandler.postDelayed({ silenceWebViewsRecursively(child) }, 1000L)
-                    }
-
-                    override fun onChildViewRemoved(parent: View?, child: View?) {}
-                })
                 for (i in 0 until root.childCount) {
                     silenceWebViewsRecursively(root.getChildAt(i))
                 }
@@ -403,10 +419,7 @@ object AdMobManager {
                 webView.webChromeClient = SilencingWebChromeClient(existingClient)
             }
             runCatching {
-                webView.evaluateJavascript(
-                    "try{window.onerror=function(){return true;};if(window.console){window.console.error=function(){};window.console.warn=function(){};}}catch(e){}",
-                    null
-                )
+                webView.evaluateJavascript(SILENCE_JS_SNIPPET, null)
             }
         }
     }
@@ -425,12 +438,9 @@ object AdMobManager {
         }
 
         override fun onProgressChanged(view: WebView?, newProgress: Int) {
-            if (view != null && (newProgress == 15 || newProgress == 50 || newProgress == 100)) {
+            if (view != null) {
                 runCatching {
-                    view.evaluateJavascript(
-                        "try{window.onerror=function(){return true;};if(window.console){window.console.error=function(){};window.console.warn=function(){};}}catch(e){}",
-                        null
-                    )
+                    view.evaluateJavascript(SILENCE_JS_SNIPPET, null)
                 }
             }
             runCatching { delegate?.onProgressChanged(view, newProgress) ?: super.onProgressChanged(view, newProgress) }
@@ -598,6 +608,41 @@ object AdMobManager {
         return if (isValidAdUnitId(configuredId)) configuredId else ""
     }
 
+    private const val APP_OPEN_LOG_TAG = "AppOpenAd"
+
+    /**
+     * Returns true if a valid, fresh (< 4h old) App Open ad is currently loaded for the resolved unit ID.
+     */
+    fun isAppOpenAdLoadedAndFresh(settings: AdvertisementSettings): Boolean {
+        val unitId = resolveAppOpenUnitId(settings)
+        if (unitId.isBlank()) return false
+        val now = System.currentTimeMillis()
+        return cachedAppOpenAd != null &&
+            cachedAppOpenUnitId == unitId &&
+            (now - cachedAppOpenLoadedAtMs) < APP_OPEN_MAX_AGE_MS
+    }
+
+    /**
+     * Returns true if the app startup splash should keep waiting (up to the 5-second cap) for the App Open ad
+     * to finish loading:
+     * - Activity is alive
+     * - Not the very first launch after install
+     * - App Open ads and allAdsEnabled are enabled with a valid unit ID (or testAdMode)
+     * - 30-minute cooldown has elapsed
+     */
+    fun canWaitForAppOpenAdOnStartup(activity: Activity, settings: AdvertisementSettings): Boolean {
+        if (activity.isFinishing || activity.isDestroyed) return false
+        if (markAndCheckIsFirstLaunchSession(activity)) return false
+        if (isShowingFullScreenAd) return false
+        val unitId = resolveAppOpenUnitId(settings)
+        if (unitId.isBlank()) return false
+        val prefs = activity.applicationContext.getSharedPreferences(AD_PREFS_NAME, Context.MODE_PRIVATE)
+        val lastShownMs = prefs.getLong(KEY_LAST_APP_OPEN_SHOWN_MS, 0L)
+        val now = System.currentTimeMillis()
+        if (lastShownMs > 0L && (now - lastShownMs) < APP_OPEN_COOLDOWN_MS) return false
+        return true
+    }
+
     /**
      * Preloads an App Open ad in the background if enabled and configured in `advertisementSettings/global`.
      */
@@ -618,6 +663,7 @@ object AdMobManager {
 
         ensureMobileAdsInitialized(context)
         isPreloadingAppOpen = true
+        Log.d(APP_OPEN_LOG_TAG, "preload start (unitId=$unitId)")
 
         runCatching {
             AppOpenAd.load(
@@ -630,16 +676,19 @@ object AdMobManager {
                         cachedAppOpenAd = ad
                         cachedAppOpenUnitId = unitId
                         cachedAppOpenLoadedAtMs = System.currentTimeMillis()
+                        Log.d(APP_OPEN_LOG_TAG, "loaded (unitId=$unitId)")
                     }
 
                     override fun onAdFailedToLoad(loadAdError: LoadAdError) {
                         isPreloadingAppOpen = false
                         cachedAppOpenAd = null
+                        Log.d(APP_OPEN_LOG_TAG, "failed: ${loadAdError.message} (code=${loadAdError.code})")
                     }
                 }
             )
-        }.onFailure {
+        }.onFailure { e ->
             isPreloadingAppOpen = false
+            Log.d(APP_OPEN_LOG_TAG, "failed: ${e.message}")
         }
     }
 
@@ -649,7 +698,7 @@ object AdMobManager {
      * 2. Ads are allowed (UMP consent)
      * 3. `advertisementSettings/global` has `allAdsEnabled == true`, `appOpenAdsEnabled == true`,
      *    and a valid unit ID (or testAdMode == true)
-     * 4. The App Open ad is ALREADY loaded (never blocks startup; if not ready, skips silently and preloads)
+     * 4. The App Open ad is ALREADY loaded
      * 5. At least 30 minutes have passed since the last App Open ad was shown
      */
     fun showAppOpenAdIfEligible(
@@ -661,7 +710,16 @@ object AdMobManager {
             onComplete()
             return
         }
+        val unitId = resolveAppOpenUnitId(settings)
+        if (!settings.allAdsEnabled || !settings.appOpenAdsEnabled || unitId.isBlank()) {
+            cachedAppOpenAd = null
+            cachedAppOpenUnitId = null
+            Log.d(APP_OPEN_LOG_TAG, "skipped: disabled")
+            onComplete()
+            return
+        }
         if (markAndCheckIsFirstLaunchSession(activity)) {
+            Log.d(APP_OPEN_LOG_TAG, "skipped: first launch")
             preloadAppOpenAdIfNeeded(activity, settings)
             onComplete()
             return
@@ -671,21 +729,18 @@ object AdMobManager {
             return
         }
 
-        val unitId = resolveAppOpenUnitId(settings)
-        if (unitId.isBlank() || !canRequestAds(activity)) {
-            if (unitId.isBlank()) {
-                cachedAppOpenAd = null
-                cachedAppOpenUnitId = null
-            }
-            onComplete()
-            return
-        }
-
         val prefs = activity.applicationContext.getSharedPreferences(AD_PREFS_NAME, Context.MODE_PRIVATE)
         val lastShownMs = prefs.getLong(KEY_LAST_APP_OPEN_SHOWN_MS, 0L)
         val now = System.currentTimeMillis()
         if (lastShownMs > 0L && (now - lastShownMs) < APP_OPEN_COOLDOWN_MS) {
+            Log.d(APP_OPEN_LOG_TAG, "skipped: cooldown")
             preloadAppOpenAdIfNeeded(activity, settings)
+            onComplete()
+            return
+        }
+
+        if (!canRequestAds(activity)) {
+            Log.d(APP_OPEN_LOG_TAG, "skipped: not loaded")
             onComplete()
             return
         }
@@ -697,6 +752,7 @@ object AdMobManager {
 
         if (!isAdFresh || ad == null) {
             cachedAppOpenAd = null
+            Log.d(APP_OPEN_LOG_TAG, "skipped: not loaded")
             preloadAppOpenAdIfNeeded(activity, settings)
             onComplete()
             return
@@ -717,20 +773,24 @@ object AdMobManager {
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdDismissedFullScreenContent() {
                 isShowingFullScreenAd = false
+                Log.d(APP_OPEN_LOG_TAG, "dismissed")
                 preloadAppOpenAdIfNeeded(activity, settings)
                 finishOnce()
             }
 
             override fun onAdFailedToShowFullScreenContent(adError: AdError) {
                 isShowingFullScreenAd = false
+                Log.d(APP_OPEN_LOG_TAG, "failed: ${adError.message} (code=${adError.code})")
                 preloadAppOpenAdIfNeeded(activity, settings)
                 finishOnce()
             }
         }
         runCatching {
+            Log.d(APP_OPEN_LOG_TAG, "shown")
             ad.show(activity)
-        }.onFailure {
+        }.onFailure { e ->
             isShowingFullScreenAd = false
+            Log.d(APP_OPEN_LOG_TAG, "failed: ${e.message}")
             preloadAppOpenAdIfNeeded(activity, settings)
             finishOnce()
         }

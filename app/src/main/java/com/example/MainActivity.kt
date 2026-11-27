@@ -298,6 +298,8 @@ fun PromptLensAppRoot(
     val activeDetailPromptText by viewModel.activeDetailPromptText.collectAsStateWithLifecycle()
     val isPromptComingSoon by viewModel.isPromptComingSoon.collectAsStateWithLifecycle()
     val activeComments by viewModel.activeComments.collectAsStateWithLifecycle()
+    val commentLikeCounts by viewModel.commentLikeCounts.collectAsStateWithLifecycle()
+    val likedCommentIds by viewModel.likedCommentIds.collectAsStateWithLifecycle()
     val mergedNotifications by viewModel.mergedNotificationsState.collectAsStateWithLifecycle()
     val hasUnreadNotifications by viewModel.hasUnreadNotifications.collectAsStateWithLifecycle()
     val advertisementSettings by viewModel.advertisementSettings.collectAsStateWithLifecycle()
@@ -347,12 +349,28 @@ fun PromptLensAppRoot(
         AdMobManager.preloadAppOpenAdIfNeeded(context, advertisementSettings)
     }
 
-    // App start: show the PromptLens logo on the dark background for 2.5 seconds while loading the App Open ad.
-    // After 2.5s, if the App Open ad is ready and eligible, show it and then open Home; otherwise go directly to Home.
+    // App start: show the PromptLens logo on the dark background for at least 2.5 seconds.
+    // If App Open ads are enabled and eligible, wait up to a maximum of 5 seconds in total (polling every 100ms)
+    // for the ad to finish loading. Show as soon as ready after 2.5s; never block longer than 5 seconds.
     LaunchedEffect(Unit) {
         if (isStartupLogoShowing) {
-            AdMobManager.preloadAppOpenAdIfNeeded(context, latestAdSettings)
-            delay(2500L)
+            val startMs = System.currentTimeMillis()
+            // Minimum 2.5s splash logo display while continuously attempting preload as settings/consent arrive
+            while ((System.currentTimeMillis() - startMs) < 2500L) {
+                AdMobManager.preloadAppOpenAdIfNeeded(context, latestAdSettings)
+                delay(100L)
+            }
+            // Wait up to 5.0s total if App Open ads are enabled & eligible and still loading
+            while ((System.currentTimeMillis() - startMs) < 5000L) {
+                AdMobManager.preloadAppOpenAdIfNeeded(context, latestAdSettings)
+                if (!AdMobManager.canWaitForAppOpenAdOnStartup(activity, latestAdSettings)) {
+                    break
+                }
+                if (AdMobManager.isAppOpenAdLoadedAndFresh(latestAdSettings)) {
+                    break
+                }
+                delay(100L)
+            }
             AdMobManager.showAppOpenAdIfEligible(
                 activity = activity,
                 settings = latestAdSettings,
@@ -579,6 +597,8 @@ fun PromptLensAppRoot(
                             activePromptText = activeDetailPromptText,
                             isPromptComingSoon = isPromptComingSoon,
                             comments = activeComments,
+                            commentLikeCounts = commentLikeCounts,
+                            likedCommentIds = likedCommentIds,
                             currentUserId = currentUserId,
                             advertisementSettings = advertisementSettings,
                             appConfigSettings = appConfigSettings,
@@ -614,6 +634,19 @@ fun PromptLensAppRoot(
                             },
                             onDeleteComment = { comment ->
                                 viewModel.deleteComment(comment)
+                            },
+                            onToggleCommentLike = { comment ->
+                                viewModel.toggleCommentLike(
+                                    comment = comment,
+                                    onRequireSignIn = requestGoogleSignInAndContinue
+                                )
+                            },
+                            onCommentsSheetVisibilityChanged = { isOpen ->
+                                if (isOpen) {
+                                    viewModel.observeCommentLikesForImage(detailImg.id)
+                                } else {
+                                    viewModel.stopObservingCommentLikes()
+                                }
                             },
                             onReportComment = { comment, reason ->
                                 viewModel.reportComment(

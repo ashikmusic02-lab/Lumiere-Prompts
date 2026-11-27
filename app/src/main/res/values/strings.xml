@@ -59,6 +59,7 @@
     <string name="no_comments_yet">No comments yet. Be the first!</string>
     <string name="reply_from_promptlens">Reply from PromptLens</string>
     <string name="delete_comment">Delete</string>
+    <string name="delete_comment_confirm_title">Delete this comment?</string>
     <string name="report_comment">Report</string>
     <string name="block_user">Block user</string>
     <string name="user_blocked_message">User blocked</string>

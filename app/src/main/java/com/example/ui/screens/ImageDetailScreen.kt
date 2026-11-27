@@ -54,19 +54,22 @@ import androidx.compose.material.icons.automirrored.filled.Comment
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -184,6 +187,10 @@ fun ImageDetailScreen(
     onBlockUser: (String) -> Unit,
     onRequireSignIn: (afterSignInAction: () -> Unit) -> Unit,
     onEmitMessage: (String) -> Unit,
+    commentLikeCounts: Map<String, Int> = emptyMap(),
+    likedCommentIds: Set<String> = emptySet(),
+    onToggleCommentLike: (ImageComment) -> Unit = {},
+    onCommentsSheetVisibilityChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -196,9 +203,7 @@ fun ImageDetailScreen(
     var showCommentsSheet by rememberSaveable(image.id) { mutableStateOf(false) }
     var commentDraft by rememberSaveable(image.id) { mutableStateOf("") }
     var isCommentInputFocused by remember { mutableStateOf(false) }
-    var commentToReport by remember { mutableStateOf<ImageComment?>(null) }
-    val defaultReportReason = stringResource(R.string.report_default_reason)
-    var reportReasonText by remember { mutableStateOf(defaultReportReason) }
+    var commentToDelete by remember { mutableStateOf<ImageComment?>(null) }
 
     val copiedMsg = stringResource(R.string.copied_message)
     val appName = stringResource(R.string.app_name)
@@ -258,8 +263,13 @@ fun ImageDetailScreen(
 
     DisposableEffect(image.id) {
         onDispose {
+            onCommentsSheetVisibilityChanged(false)
             onClearPromptMemory()
         }
+    }
+
+    LaunchedEffect(showCommentsSheet, image.id) {
+        onCommentsSheetVisibilityChanged(showCommentsSheet && appConfigSettings.allowComments)
     }
 
     val hasValidCategory = remember(image.categoryId, image.categoryName) {
@@ -273,54 +283,53 @@ fun ImageDetailScreen(
 
     val commentCount = maxOf(image.commentCount, comments.size.toLong())
 
-    // Report Comment Dialog
-    commentToReport?.let { targetComment ->
+    // Delete Comment Confirmation Dialog
+    commentToDelete?.let { targetComment ->
         AlertDialog(
-            onDismissRequest = { commentToReport = null },
+            onDismissRequest = { commentToDelete = null },
             containerColor = IndigoSurfaceTop,
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(24.dp),
             title = {
                 Text(
-                    text = stringResource(R.string.report_dialog_title),
+                    text = stringResource(R.string.delete_comment_confirm_title),
                     style = MaterialTheme.typography.titleMedium,
                     color = Color.White,
                     fontWeight = FontWeight.SemiBold
                 )
             },
-            text = {
-                OutlinedTextField(
-                    value = reportReasonText,
-                    onValueChange = { reportReasonText = it },
-                    label = { Text(stringResource(R.string.report_reason_label)) },
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("report_reason_input")
-                )
-            },
             confirmButton = {
                 Button(
                     onClick = {
-                        onReportComment(targetComment, reportReasonText.ifBlank { defaultReportReason })
-                        commentToReport = null
+                        onDeleteComment(targetComment)
+                        commentToDelete = null
                     },
                     shape = RoundedCornerShape(50),
-                    modifier = Modifier.testTag("confirm_report_button")
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    modifier = Modifier.testTag("confirm_delete_comment_button")
                 ) {
-                    Text(stringResource(R.string.submit_action))
+                    Text(stringResource(R.string.delete_comment))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { commentToReport = null }) {
-                    Text(stringResource(R.string.cancel_action))
+                TextButton(
+                    onClick = { commentToDelete = null },
+                    modifier = Modifier.testTag("cancel_delete_comment_button")
+                ) {
+                    Text(
+                        text = stringResource(R.string.cancel_action),
+                        color = TextLavenderGray
+                    )
                 }
             }
         )
     }
 
-    // ModalBottomSheet for Comments (~60% partial height, expandable to full height by dragging, keyboard-safe)
+    // ModalBottomSheet for Comments (YouTube-style fixed ~75% height, skipPartiallyExpanded = true, pinned input bar, keyboard-safe)
     if (showCommentsSheet && appConfigSettings.allowComments) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
             onDismissRequest = {
                 isCommentInputFocused = false
@@ -337,16 +346,16 @@ fun ImageDetailScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .fillMaxHeight(0.92f)
+                    .fillMaxHeight(0.75f)
                     .navigationBarsPadding()
                     .imePadding()
                     .testTag("comments_bottom_sheet")
             ) {
-                // Sheet Header: Title "Comments (N)" + Close button
+                // Sheet Header: Title "Comments (N)" + Close button (stays on top)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 20.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
+                        .padding(start = 20.dp, end = 12.dp, top = 2.dp, bottom = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -355,7 +364,7 @@ fun ImageDetailScreen(
                             text = stringResource(R.string.comments_header, commentCount.toInt()),
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 20.sp
+                                fontSize = 19.sp
                             ),
                             color = TextPureWhite
                         )
@@ -386,13 +395,13 @@ fun ImageDetailScreen(
                     thickness = 0.8.dp
                 )
 
-                // Scrollable List of Comments (newest first) or Friendly Empty State
+                // Middle area (weight(1f)): Scrollable List of Comments or Centered Empty State
                 if (comments.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
-                            .padding(24.dp),
+                            .padding(horizontal = 24.dp, vertical = 16.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(
@@ -401,7 +410,7 @@ fun ImageDetailScreen(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(56.dp)
+                                    .size(52.dp)
                                     .clip(CircleShape)
                                     .background(AccentViolet.copy(alpha = 0.16f))
                                     .border(1.dp, IndigoSoftBorder, CircleShape),
@@ -411,7 +420,7 @@ fun ImageDetailScreen(
                                     imageVector = Icons.AutoMirrored.Filled.Comment,
                                     contentDescription = null,
                                     tint = TextLavenderGray,
-                                    modifier = Modifier.size(26.dp)
+                                    modifier = Modifier.size(24.dp)
                                 )
                             }
                             Text(
@@ -432,22 +441,22 @@ fun ImageDetailScreen(
                             .weight(1f)
                             .fillMaxWidth()
                             .testTag("comments_sheet_list"),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                     ) {
                         items(
                             items = comments,
                             key = { comment -> comment.id }
                         ) { comment ->
+                            val isOwn = !currentUserId.isNullOrBlank() && comment.userId == currentUserId
+                            val isCommentLiked = likedCommentIds.contains(comment.id)
+                            val likeCount = commentLikeCounts[comment.id] ?: 0
                             CommentRowItem(
                                 comment = comment,
-                                isOwnComment = !currentUserId.isNullOrBlank() && comment.userId == currentUserId,
-                                onDelete = { onDeleteComment(comment) },
-                                onReport = {
-                                    reportReasonText = defaultReportReason
-                                    commentToReport = comment
-                                },
-                                onBlockUser = { onBlockUser(comment.userId) }
+                                isOwnComment = isOwn,
+                                isLiked = isCommentLiked,
+                                likeCount = likeCount,
+                                onToggleLike = { onToggleCommentLike(comment) },
+                                onRequestDelete = { commentToDelete = comment }
                             )
                         }
                     }
@@ -1202,9 +1211,10 @@ private fun RoundActionIconButton(
 private fun CommentRowItem(
     comment: ImageComment,
     isOwnComment: Boolean,
-    onDelete: () -> Unit,
-    onReport: () -> Unit,
-    onBlockUser: () -> Unit
+    isLiked: Boolean,
+    likeCount: Int,
+    onToggleLike: () -> Unit,
+    onRequestDelete: () -> Unit
 ) {
     val dateString = remember(comment.createdAt) {
         val seconds = comment.createdAt?.seconds
@@ -1213,134 +1223,232 @@ private fun CommentRowItem(
         } else ""
     }
 
-    Surface(
-        shape = RoundedCornerShape(22.dp),
-        color = IndigoInnerBox,
-        border = BorderStroke(1.dp, IndigoSoftBorder),
+    val avatarInitial = remember(comment.userName) {
+        comment.userName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "U"
+    }
+
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    // Quick heart scale animation when liked
+    val heartScale = remember { Animatable(1f) }
+    var prevLiked by remember(comment.id) { mutableStateOf(isLiked) }
+    LaunchedEffect(isLiked) {
+        if (isLiked != prevLiked) {
+            heartScale.snapTo(0.8f)
+            heartScale.animateTo(
+                targetValue = 1.24f,
+                animationSpec = tween(durationMillis = 110)
+            )
+            heartScale.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 120)
+            )
+            prevLiked = isLiked
+        }
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .testTag("comment_item_${comment.id}")
+            .padding(vertical = 8.dp)
+            .testTag("comment_item_${comment.id}"),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+        // Row 1: small circular avatar with first letter, bold user name, small muted date, and 3-dot icon ONLY for own comment
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(AccentViolet.copy(alpha = 0.26f), CircleShape)
+                    .border(1.dp, AccentViolet.copy(alpha = 0.55f), CircleShape),
+                contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = comment.userName,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold
+                    text = avatarInitial,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp
+                    ),
+                    color = Color.White
                 )
-                if (dateString.isNotBlank()) {
-                    Text(
-                        text = dateString,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextLavenderGray
-                    )
-                }
             }
+
+            Spacer(modifier = Modifier.width(9.dp))
 
             Text(
-                text = comment.text,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.92f)
+                text = comment.userName,
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.5.sp
+                ),
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
             )
 
-            if (comment.adminReply.isNotBlank()) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = AccentViolet.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, AccentViolet.copy(alpha = 0.4f)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 10.dp, top = 4.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.reply_from_promptlens),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = TextLavenderGray,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = comment.adminReply,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White
-                        )
-                    }
-                }
+            if (dateString.isNotBlank()) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = dateString,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 11.5.sp
+                    ),
+                    color = TextLavenderMuted,
+                    maxLines = 1
+                )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (isOwnComment) {
-                    TextButton(
-                        onClick = onDelete,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.testTag("delete_comment_${comment.id}")
+            Spacer(modifier = Modifier.weight(1f))
+
+            if (isOwnComment) {
+                Box {
+                    IconButton(
+                        onClick = { menuExpanded = true },
+                        modifier = Modifier
+                            .size(28.dp)
+                            .testTag("comment_more_menu_${comment.id}")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = null,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = stringResource(R.string.delete_comment),
-                            style = MaterialTheme.typography.labelSmall
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = stringResource(R.string.delete_comment),
+                            tint = TextLavenderMuted,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
-                } else {
-                    TextButton(
-                        onClick = onReport,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.testTag("report_comment_${comment.id}")
+
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                        containerColor = IndigoSurfaceDark
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Flag,
-                            contentDescription = null,
-                            modifier = Modifier.size(15.dp)
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = stringResource(R.string.delete_comment),
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onRequestDelete()
+                            },
+                            modifier = Modifier.testTag("delete_comment_${comment.id}")
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = stringResource(R.string.report_comment),
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                    if (comment.userId.isNotBlank()) {
-                        TextButton(
-                            onClick = onBlockUser,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            modifier = Modifier.testTag("block_user_${comment.id}")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Block,
-                                contentDescription = null,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = stringResource(R.string.block_user),
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
                     }
                 }
             }
         }
+
+        // Row 2: comment text, normal weight, comfortable line height
+        Text(
+            text = comment.text,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontWeight = FontWeight.Normal,
+                lineHeight = 20.sp,
+                fontSize = 14.sp
+            ),
+            color = Color.White.copy(alpha = 0.93f),
+            modifier = Modifier.padding(start = 37.dp, end = 4.dp)
+        )
+
+        // Row 3 (small, muted): heart icon button with like count next to it
+        Row(
+            modifier = Modifier
+                .padding(start = 33.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable(onClick = onToggleLike)
+                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                    .testTag("like_comment_${comment.id}"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = if (isLiked) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                    contentDescription = stringResource(R.string.like_action),
+                    tint = if (isLiked) PrimaryPurple else TextLavenderMuted,
+                    modifier = Modifier
+                        .size(15.dp)
+                        .graphicsLayer {
+                            scaleX = heartScale.value
+                            scaleY = heartScale.value
+                        }
+                )
+                Text(
+                    text = likeCount.toString(),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 11.5.sp,
+                        fontWeight = if (isLiked) FontWeight.SemiBold else FontWeight.Normal
+                    ),
+                    color = if (isLiked) PrimaryPurple else TextLavenderMuted
+                )
+            }
+        }
+
+        // Admin reply: indented, slightly highlighted block with small label and verified check icon
+        if (comment.adminReply.isNotBlank()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 37.dp, top = 4.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AccentViolet.copy(alpha = 0.14f), RoundedCornerShape(12.dp))
+                    .border(0.8.dp, AccentViolet.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.reply_from_promptlens),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 11.5.sp
+                        ),
+                        color = TextLavenderGray
+                    )
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = AccentViolet,
+                        modifier = Modifier.size(13.5.dp)
+                    )
+                }
+                Text(
+                    text = comment.adminReply,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        lineHeight = 18.sp,
+                        fontSize = 13.sp
+                    ),
+                    color = Color.White.copy(alpha = 0.95f)
+                )
+            }
+        }
+
+        HorizontalDivider(
+            color = IndigoSoftBorder.copy(alpha = 0.42f),
+            thickness = 0.6.dp,
+            modifier = Modifier.padding(top = 4.dp)
+        )
     }
 }
 

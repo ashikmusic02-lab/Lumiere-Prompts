@@ -20,6 +20,7 @@ import com.example.model.AiToolItem
 import com.example.model.AppConfigSettings
 import com.example.model.AppNotification
 import com.example.model.CategoryItem
+import com.example.model.CommentLikeRecord
 import com.example.model.FavoriteRecord
 import com.example.model.ImageComment
 import com.example.model.InspirationImage
@@ -166,6 +167,31 @@ class LumiereViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private var commentsJob: Job? = null
+
+    private val _rawActiveCommentLikes = MutableStateFlow<List<CommentLikeRecord>>(emptyList())
+    private var commentLikesJob: Job? = null
+
+    val commentLikeCounts: StateFlow<Map<String, Int>> = _rawActiveCommentLikes
+        .map { list ->
+            list.groupBy { it.commentId }
+                .mapValues { (_, records) -> records.map { it.userId }.distinct().size }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    val likedCommentIds: StateFlow<Set<String>> = combine(
+        _rawActiveCommentLikes,
+        _currentUserId,
+        _isRealUser
+    ) { list, uid, isReal ->
+        if (!isReal || uid.isNullOrBlank()) {
+            emptySet()
+        } else {
+            list.asSequence()
+                .filter { it.userId == uid }
+                .map { it.commentId }
+                .toSet()
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     // =========================================================================
     // USER LIKES & SAVED FAVORITES
@@ -641,10 +667,30 @@ class LumiereViewModel(
         }
     }
 
+    fun observeCommentLikesForImage(imageId: String) {
+        commentLikesJob?.cancel()
+        _rawActiveCommentLikes.value = emptyList()
+        if (repository == null || imageId.isBlank()) return
+        commentLikesJob = viewModelScope.launch {
+            repository.observeImageCommentLikes(imageId)
+                .catch { emit(emptyList()) }
+                .collect { list ->
+                    _rawActiveCommentLikes.value = list
+                }
+        }
+    }
+
+    fun stopObservingCommentLikes() {
+        commentLikesJob?.cancel()
+        commentLikesJob = null
+        _rawActiveCommentLikes.value = emptyList()
+    }
+
     fun stopObservingComments() {
         commentsJob?.cancel()
         commentsJob = null
         _rawActiveComments.value = emptyList()
+        stopObservingCommentLikes()
     }
 
     fun onImageDetailOpened(image: InspirationImage) {
@@ -900,6 +946,66 @@ class LumiereViewModel(
                     img.copy(commentCount = (img.commentCount - 1L).coerceAtLeast(0L))
                 }
             }.onFailure { err ->
+                if (!isCurrentlyOnline() || isNetworkOrTimeoutError(err)) {
+                    emitOfflineMessage()
+                } else {
+                    emitMessage(appContext.getString(R.string.error_loading_content))
+                }
+            }
+        }
+    }
+
+    fun toggleCommentLike(
+        comment: ImageComment,
+        onRequireSignIn: (afterSignInAction: () -> Unit) -> Unit
+    ) {
+        if (!isCurrentlyOnline()) {
+            emitOfflineMessage()
+            return
+        }
+        val currentUser = runCatching { Firebase.auth.currentUser }.getOrNull()
+        if (!GoogleSignInManager.isRealAuthenticatedUser(currentUser)) {
+            onRequireSignIn {
+                executeToggleCommentLike(comment)
+            }
+            return
+        }
+        executeToggleCommentLike(comment)
+    }
+
+    private fun executeToggleCommentLike(comment: ImageComment) {
+        val repo = repository ?: return
+        val currentUser = runCatching { Firebase.auth.currentUser }.getOrNull() ?: return
+        if (!GoogleSignInManager.isRealAuthenticatedUser(currentUser)) return
+        val uid = currentUser.uid
+        if (uid.isBlank() || comment.id.isBlank() || comment.imageId.isBlank()) return
+
+        val docId = "${uid}_${comment.id}"
+        val previousSnapshot = _rawActiveCommentLikes.value
+        val currentlyLiked = previousSnapshot.any { it.commentId == comment.id && it.userId == uid }
+
+        // Optimistic UI update
+        _rawActiveCommentLikes.value = if (currentlyLiked) {
+            previousSnapshot.filterNot { it.commentId == comment.id && it.userId == uid }
+        } else {
+            previousSnapshot + CommentLikeRecord(
+                id = docId,
+                userId = uid,
+                commentId = comment.id,
+                imageId = comment.imageId,
+                createdAt = Timestamp.now()
+            )
+        }
+
+        viewModelScope.launch {
+            val res = repo.toggleCommentLike(
+                commentId = comment.id,
+                imageId = comment.imageId,
+                currentlyLiked = currentlyLiked
+            )
+            res.onFailure { err ->
+                // Roll back optimistic comment like if server write failed
+                _rawActiveCommentLikes.value = previousSnapshot
                 if (!isCurrentlyOnline() || isNetworkOrTimeoutError(err)) {
                     emitOfflineMessage()
                 } else {
